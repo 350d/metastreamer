@@ -14,8 +14,8 @@ a web page. The whole system is a 90 MB read-only image that shows a picture abo
 - **Snapshots**: JPEG from the hardware encoder, `/snapshot`
 - **Telemetry**: link quality, goggles battery, air unit recording and storage, connected devices,
   as JSON, server-sent events and HLS metadata
-- **Camera settings**: resolution, frame rate, exposure, ISO, shutter, EV, white balance, sharpness,
-  noise reduction, colour profile, anti-flicker
+- **Camera settings** (being tested and reworked, see below): resolution, frame rate, exposure, ISO, shutter,
+  EV, white balance, sharpness, noise reduction, colour profile, anti-flicker
 - **Wi-Fi**: networks from one settings file on the SD card or the web page, DHCP or a static address
 - **Clock**: NTP over Wi-Fi, local time zone, and it sets the goggles' clock for correct recording dates
 - **Appliance-style system**: Buildroot, read-only root, hardware watchdog, survives HDMI hot-plug
@@ -36,7 +36,7 @@ a web page. The whole system is a 90 MB read-only image that shows a picture abo
 
 | Air unit | Code | Camera settings |
 |---|---|---|
-| DJI O3 Air Unit | WM1695 | **Tested** |
+| DJI O3 Air Unit | WM1695 | **Partly working**: exposure, ISO, shutter, EV, sharpness and the rest apply; resolution / frame rate do not stick yet (see below) |
 | DJI O4 Air Unit | ZA530 | Untested (same commands) |
 | DJI O4 Air Unit Pro | ZA5305 | Untested (same commands; 48 fps and D-Log listed) |
 
@@ -101,6 +101,11 @@ it fast. The binary is about 190 KB, and the whole system uses about 90 MB of th
 - **Preview**: the live video (low-latency stream, HLS, or snapshots every 2 s, whichever the browser
   supports), full screen, links to HLS, a snapshot, `/status` and `/duml`, and the air unit's storage bar
 - **Air unit camera**: every setting applies immediately
+
+> **Camera settings are being tested and reworked.** On the O3 Air Unit with Goggles 2, a change of
+> resolution or frame rate (Format) is not kept: the camera goes quiet for about 4 s, restarts its video
+> pipeline and comes back with the previous format, so the selector jumps back. The other camera settings
+> apply and stay. Until this is fixed, change the format in the goggles' own menu.
 - **Settings** (gear icon): Wi-Fi networks, DHCP or static address, time zone (automatic from the browser
   or chosen by hand), and setting the goggles' clock again
 
