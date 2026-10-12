@@ -46,11 +46,13 @@ Python 3 with `pyserial` and `Pillow`.
 ## Status of the scripts
 
 The numbers below come from a first version of `fastlab.py` that was a scratch script. The published `fastlab.py` is a
-cleaned-up rewrite of it: the trial and bisection logic is the same, the groups were rebuilt. In INAV mode the rewrite
-gave the same results (537 and 526 for solid rows, 326 shown and 327 dropped for cells two columns apart). The
-Betaflight-mode runs of the rewrite are still being checked, so if you get other numbers from the groups there, trust
-the table below and the captures, and please open an issue. `msplab.py` and `osdrate.py` differ from the ones used only
-in their default serial port and snapshot address. Do not run the bench while another program draws on the same OSD.
+cleaned-up rewrite of it: the trial and bisection logic is the same, the groups were rebuilt. Its first clean run in INAV
+mode gave 537, 326 and 407 as the original did, but 461 instead of 526 for rows of 50: one lost frame was read as
+"discarded" and moved the bisection down. A frame now counts as discarded only after two attempts in a row, and a single
+differing number in a group is a reason to run the group again. The Betaflight-mode runs of the rewrite are still being
+checked, so if you get other numbers from the groups there, trust the table below and the captures, and please open an
+issue. `msplab.py` and `osdrate.py` differ from the ones used only in their default serial port and snapshot address.
+Do not run the bench while another program draws on the same OSD.
 
 ## How a measurement works
 

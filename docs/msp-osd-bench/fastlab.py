@@ -20,7 +20,7 @@ goggles menu first: Flight Controller = Betaflight (or INAV with --mode inav) an
   fastlab.py G1                         every glyph code 0x00-0xFF: 630 single WRITEs in solid rows of 53 (630 < 637, the limit for
                                         X in that geometry): a dropped code costs more than X. Controls (X x630 shown, X x638
                                         dropped) at start, every 64 codes and at the end show the detector did not drift.
-                                        INAV mode: --limit 537 --n 520; --first/--last resume a pass
+                                        INAV mode: --limit 537 --n 520; --first/--last resume a pass, --codes picks codes
   fastlab.py E1 G C1 C2 C3 C4 D1 D2 D3  glyph cost (0x58, 0x30, 0x01, 0x06, 0x70, 0x7E, 0x90, 0x9C), row geometry (width and start
                                         column), isolated cells with step 2-6, write order (forward, reversed, random),
                                         glyph entropy, 0x01/X mixes, run length and gap width: all bisections of N
@@ -101,13 +101,17 @@ class Lab:
             self.save(img)
         return ok
 
+    def shown(self, writes):
+        """a frame counts as dropped only if two attempts in a row are: a single lost frame must not move the bisection"""
+        return self.trial(writes) or self.trial(writes)
+
     def bisect(self, make, lo, hi):
         """make(n) -> writes. Largest n in [lo, hi) shown, or a text if lo is already dropped / hi still shown."""
-        if not self.trial(make(lo)): return f'even {lo} dropped'
+        if not self.shown(make(lo)): return f'even {lo} dropped'
         if self.trial(make(hi)): return f'{hi} shown, no limit found up to {hi}'
         while hi - lo > 1:
             mid = (lo + hi) // 2
-            if self.trial(make(mid)): lo = mid
+            if self.shown(make(mid)): lo = mid
             else: hi = mid
         return lo
 
@@ -243,11 +247,12 @@ def g_G1(lab):
         ok1 = lab.trial(singles(cells)(a.n)); ok2 = lab.trial(singles(cells)(a.limit + 1))
         lab.log('G1', f'control {tag}: X x{a.n} {"shown" if ok1 else "DROPPED"} (expect shown), X x{a.limit + 1} {"shown!" if ok2 else "dropped"} (expect dropped)')
     control('start'); dropped = []
-    for code in range(a.first, a.last + 1):
+    codes = [int(x, 0) for x in a.codes.split(',')] if a.codes else list(range(a.first, a.last + 1))
+    for code in codes:
         if not (lab.trial(mk(code)) or lab.trial(mk(code))):   # one retry: a lone drop may be a lost frame
             dropped.append(code); lab.log('G1', f'0x{code:02X} DROPPED at {a.n}')
         if code % 64 == 63: control(f'after 0x{code:02X}')
-    if (a.last + 1) % 64: control('end')
+    control('end')
     lab.log('G1', f'dropped at {a.n} (cost more than X): ' + (' '.join(f'0x{c:02X}' for c in dropped) or 'none'))
 
 def g_R(lab):
@@ -312,6 +317,7 @@ def main():
     ap.add_argument('--n', type=int, default=630, help='G1: WRITEs per glyph code, just under the X limit (INAV mode: 520)')
     ap.add_argument('--limit', type=int, default=637, help='G1: measured X limit for solid rows of 53 (core group; INAV mode: 537)')
     ap.add_argument('--first', type=int, default=0); ap.add_argument('--last', type=int, default=255)
+    ap.add_argument('--codes', help='G1: only these glyph codes, e.g. 0x00,0x01,0x7F,0x9C (instead of --first/--last)')
     a = ap.parse_args()
     lab = Lab(a)
     for g in a.groups: GROUPS[g](lab)
