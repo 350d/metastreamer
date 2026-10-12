@@ -179,7 +179,8 @@ static void clock_poll(void) {
     static double last_get, last_set, reget_at; static int gets, sets, force; static unsigned conf_gen, sync_gen;
     double t = now();
     if (!registered) return;
-    if (conf_gen != conf_generation()) { conf_gen = conf_generation(); sets = 0; }   /* time zone changed */
+    /* time zone changed (or first pass): the goggles' wall clock was read in the old zone, so set it anew */
+    if (conf_gen != conf_generation()) { conf_gen = conf_generation(); sets = 0; force = 1; last_set = 0; }
     if (sync_gen != conf_clock_sync_generation()) { sync_gen = conf_clock_sync_generation(); sets = 0; force = 1; last_set = 0; }
     if (!goggles_clock[0]) {   /* first read */
         if (gets < 5 && t - last_get >= 3) { last_get = t; gets++; request(REGISTRAR, CMD_GET_DATE, NULL, 0); }
