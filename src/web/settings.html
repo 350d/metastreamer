@@ -220,7 +220,7 @@ async function live(){
 (async()=>{for(;;){try{await live();}catch(e){if(e.message==='no MSE'){
   if(vid.canPlayType('application/vnd.apple.mpegurl'))hls();else snapshots();return;}}await sleep(1000);}})();
 setInterval(()=>{if(vid.hidden||!vid.buffered.length)return;const e=vid.buffered.end(vid.buffered.length-1),lag=e-vid.currentTime;
-  if(vmode==='live'){if(lag>0.3||vid.currentTime<vid.buffered.start(0))vid.currentTime=e-0.04;vid.playbackRate=lag>0.07?1.2:1.0;}
+  if(vmode==='live'){if(lag>0.6||vid.currentTime<vid.buffered.start(0))vid.currentTime=e-0.1;vid.playbackRate=lag>0.25?1.08:lag>0.14?1.03:1.0;}
   else if(lag>1.2)vid.currentTime=e-0.3;
   if(vid.paused)vid.play().catch(()=>{});},200);
 

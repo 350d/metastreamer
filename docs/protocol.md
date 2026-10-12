@@ -150,3 +150,7 @@ check, and also uses the goggles' date as a fallback system clock when it is new
 - `/duml`: every message type seen, with counts, how often the payload changed, and its first bytes
 - `metastreamer --duml-probe SET:ID` (hex): for 30 s after registration, sends that request with an empty
   payload to every known address every 3 s; the answers show up in `/duml`
+- `metastreamer --duml-console`: enables `/api/duml/send?dst=3c&set=00&id=b7&payload=<hex>&wait=<s>`, which
+  sends one request and returns, as JSON, every frame from that device within `wait` seconds (default 0.4,
+  at most 5). Off by default: it reaches every device on the goggles' bus without a login, and some requests
+  reboot the goggles or reset the link (set 00, ids 0B and 94–97, for example). Never enable it on an open network.

@@ -19,6 +19,7 @@
 #include "settings_html.h"
 
 #include <errno.h>
+#include <math.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -34,7 +35,6 @@
 #define RING 10                 /* HLS segments kept in memory */
 #define LIST 6                  /* HLS segments in the playlist */
 #define MAX_SAMPLES 900
-#define MAX_DUR (TIMESCALE / 10) /* frame duration cap: 100 ms */
 #define GAP_RESET 1.5           /* s of silence -> stream reset */
 #define MAX_CONN 12
 #define LIVE_BACKLOG (4 * 1024 * 1024) /* a lagging live client is disconnected */
@@ -133,11 +133,28 @@ static B sdata; static uint32_t s_size[MAX_SAMPLES], s_dur[MAX_SAMPLES]; static 
 static int s_cnt; static uint64_t s_base; static int open_seg;
 
 /* timing */
-static uint64_t ts0, last_ts; static int ts_started;
+static uint64_t last_ts; static int ts_started;
 static double last_feed;
 
-/* live stream: each frame is sent immediately, duration = smoothed interval, continuous timeline */
-static uint64_t live_dts; static double ema_dt = 0.02, last_au_t;
+/* Frame durations. Arrival times carry the radio's jitter, so every frame gets the stream's nominal interval
+ * (its long-run rate snapped to a standard rate), nudged by at most 5 % so that the timeline follows the
+ * wall clock on average: the player's buffer then neither drains nor grows. After a pause or a burst of
+ * more than LATE the timeline is re-anchored instead. Used by the live stream and the HLS segments. */
+static double nom_dt = 0.02, rate_t0; static unsigned long long rate_n0;
+static double tl_t0, live_t0;   /* wall time of position 0 on each timeline */
+#define LATE 0.3
+static uint32_t frame_dur(double t, double *t0, uint64_t pos) {
+    double behind = (t - *t0) - (double)pos / TIMESCALE;   /* > 0: the timeline lags the wall clock */
+    if (behind > LATE || behind < -LATE) { *t0 = t - (double)pos / TIMESCALE; behind = 0; }
+    double dd = nom_dt * (1.0 + fmax(-0.05, fmin(0.05, behind / 2.0)));
+    return (uint32_t)(dd * TIMESCALE + 0.5);
+}
+/* live stream: each frame is sent immediately, continuous timeline */
+static uint64_t live_dts; static double last_au_t;
+/* arrival statistics: intervals of the last ARR_N frames, long-run rate since the first frame */
+#define ARR_N 256
+static float arr_ms[ARR_N]; static unsigned arr_i; static double long_t0; static unsigned long long long_n0;
+static int cmp_f(const void *a, const void *b) { float x = *(const float *)a, y = *(const float *)b; return (x > y) - (x < y); }
 static uint32_t live_seq = 1;
 
 static unsigned long long n_frames, n_segs, n_resets, n_live_frags, n_bytes;
@@ -155,6 +172,9 @@ static double t_start;
 void hls_set_link_fn(json_fn f) { link_fn = f; }
 static set_fn cam_fn;
 void hls_set_camera_fn(set_fn f) { cam_fn = f; }
+static duml_fn duml_send_fn;
+void hls_set_duml_fn(duml_fn f) { duml_send_fn = f; }
+#define DUML_WAIT 0.4   /* s to collect replies for /api/duml/send */
 
 /* %XX and '+' in the query string */
 static void url_decode(char *s) {
@@ -172,14 +192,23 @@ static size_t status_json(char *out, size_t cap) {
     size_t o = 0;
     char lk[256] = "null", hd[512] = "null";
     static char tm[4096];
+    float sorted[ARR_N], aq[4] = {0, 0, 0, 0};
+    unsigned na = arr_i < ARR_N ? arr_i : ARR_N;
+    if (na) {
+        memcpy(sorted, arr_ms, na * sizeof(float)); qsort(sorted, na, sizeof(float), cmp_f);
+        aq[0] = sorted[na / 2]; aq[1] = sorted[na * 95 / 100]; aq[2] = sorted[na * 99 / 100]; aq[3] = sorted[na - 1];
+    }
     if (link_fn) link_fn(lk, sizeof(lk));
     hdmi_json(hd, sizeof(hd));
     telem_json(tm, sizeof(tm));
     o += snprintf(out + o, cap - o,
         "{\"uptime_s\":%.1f,\"usb\":%s,\"video\":{\"width\":%d,\"height\":%d,\"codec\":\"avc1.%02X%02X%02X\","
-        "\"fps\":%.1f,\"kbps\":%.0f,\"frames\":%llu,\"live_clients\":%d,\"hls_segments\":%d},"
+        "\"fps\":%.1f,\"fps_long\":%.3f,\"nominal_fps\":%.2f,\"arrival_ms\":{\"p50\":%.1f,\"p95\":%.1f,\"p99\":%.1f,\"max\":%.1f},"
+        "\"kbps\":%.0f,\"frames\":%llu,\"live_clients\":%d,\"hls_segments\":%d},"
         "\"telemetry\":%s,\"hdmi\":%s}",
-        mono() - t_start, lk, vw, vh, sps[1], sps[2], sps[3], rate_fps, rate_kbps, n_frames, live_count(), ring_n, tm, hd);
+        mono() - t_start, lk, vw, vh, sps[1], sps[2], sps[3], rate_fps,
+        long_t0 > 0 && last_au_t > long_t0 ? (n_frames - long_n0) / (last_au_t - long_t0) : 0.0, 1.0 / nom_dt,
+        aq[0], aq[1], aq[2], aq[3], rate_kbps, n_frames, live_count(), ring_n, tm, hd);
     return o < cap ? o : cap - 1;
 }
 
@@ -249,7 +278,8 @@ static void build_frag(B *b, uint32_t seq, uint64_t base, int cnt, const uint32_
 }
 
 /* ---------------- HTTP connections ---------------- */
-typedef struct { int fd; char in[8192]; size_t inlen; B out; size_t outpos; double t; int live, wait_key, closing, sse, snap_wait; unsigned snap_seq0; double snap_t0; } Conn;
+typedef struct { int fd; char in[8192]; size_t inlen; B out; size_t outpos; double t; int live, wait_key, closing, sse, snap_wait; unsigned snap_seq0; double snap_t0;
+                 int duml_wait; unsigned duml_since; uint8_t duml_src; double duml_t0, duml_for; } Conn;
 static Conn conns[MAX_CONN];
 static int lsock = -1;
 static unsigned long long n_req;
@@ -257,7 +287,7 @@ static unsigned long long n_req;
 static int live_count(void) { int n = 0; for (int i = 0; i < MAX_CONN; i++) n += conns[i].fd >= 0 && conns[i].live; return n; }
 
 static void conn_close(Conn *c) {
-    close(c->fd); c->fd = -1; c->out.n = 0; c->outpos = 0; c->inlen = 0; c->live = c->closing = c->sse = c->snap_wait = 0;
+    close(c->fd); c->fd = -1; c->out.n = 0; c->outpos = 0; c->inlen = 0; c->live = c->closing = c->sse = c->snap_wait = c->duml_wait = 0;
 }
 
 static void close_live_all(void) {
@@ -339,22 +369,25 @@ static void push_au(void) {
     if (!have_init) { au.n = 0; au_vcl = au_key = 0; return; }
     sink_au();
 
-    uint64_t ts = (uint64_t)(t * TIMESCALE);
-    uint64_t rel, d = 0;
-    if (!ts_started) { ts0 = ts; rel = 0; ts_started = 1; }
-    else {
-        rel = ts - ts0;
-        d = rel > last_ts ? rel - last_ts : 1;
-        if (d > MAX_DUR) d = MAX_DUR;
-        rel = last_ts + d;                       /* monotonic, no gaps */
+    /* nominal interval from the last 4 s, snapped to a standard rate */
+    if (rate_t0 == 0) { rate_t0 = t; rate_n0 = n_frames; }
+    else if (t - rate_t0 >= 4.0) {
+        double fps = (n_frames - rate_n0) / (t - rate_t0), best = fps;
+        static const double R[] = {24, 25, 30, 48, 50, 60, 90, 100, 120};
+        for (size_t i = 0; i < sizeof(R) / sizeof(R[0]); i++) if (fabs(fps - R[i]) < R[i] * 0.04) best = R[i];
+        if (fps > 5) nom_dt = 1.0 / best;
+        rate_t0 = t; rate_n0 = n_frames;
     }
+    /* HLS: this frame ends the previous one */
+    uint64_t rel, d = 0;
+    if (!ts_started) { rel = 0; ts_started = 1; tl_t0 = t; }
+    else { d = frame_dur(t, &tl_t0, last_ts); rel = last_ts + d; }
 
-    /* live: the frame goes out immediately */
-    if (last_au_t > 0) { double dt = t - last_au_t; if (dt > 0.002 && dt < 0.2) ema_dt = 0.9 * ema_dt + 0.1 * dt; }
+    /* live: the frame goes out immediately with its predicted duration; the timeline stays continuous */
+    if (last_au_t > 0) arr_ms[arr_i++ % ARR_N] = (float)((t - last_au_t) * 1000.0);
+    if (long_t0 == 0) { long_t0 = t; long_n0 = n_frames; }
     last_au_t = t;
-    uint32_t ld = (uint32_t)(ema_dt * TIMESCALE + 0.5);
-    if (ld < TIMESCALE / 240) ld = TIMESCALE / 240;
-    if (ld > MAX_DUR) ld = MAX_DUR;
+    uint32_t ld = frame_dur(t, &live_t0, live_dts);
     emit_live(&au, au_key, live_dts, ld);
     live_dts += ld;
 
@@ -446,8 +479,8 @@ static const char INDEX_HTML[] =
 "async function run(){for(;;){try{await live();}catch(e){s.textContent='reconnecting: '+e.message;"
 " if(e.message==='no MSE'&&v.canPlayType('application/vnd.apple.mpegurl')){hls();return;}}await sleep(1000);}}\n"
 "setInterval(()=>{if(!v.buffered.length)return;const e=v.buffered.end(v.buffered.length-1),lag=e-v.currentTime;\n"
-" if(mode==='live'){if(lag>0.3||v.currentTime<v.buffered.start(0))v.currentTime=e-0.04;"
-"v.playbackRate=lag>0.07?1.2:1.0;}else if(lag>1.2)v.currentTime=e-0.3;\n"
+" if(mode==='live'){if(lag>0.6||v.currentTime<v.buffered.start(0))v.currentTime=e-0.1;"
+"v.playbackRate=lag>0.25?1.08:lag>0.14?1.03:1.0;}else if(lag>1.2)v.currentTime=e-0.3;\n"
 " if(v.paused)v.play().catch(()=>{});\n"
 " s.textContent=mode+'  '+v.videoWidth+'x'+v.videoHeight+'  buffer '+(lag*1000|0)+' ms   '+tele;},200);\n"
 "let tele='';const es=new EventSource('events');es.onmessage=e=>{try{const j=JSON.parse(e.data),t=j.telemetry||{},p=[];\n"
@@ -618,6 +651,30 @@ static void handle_request(Conn *c) {
         static const char h[] = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n"
                                 "Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n";
         c->out.n = 0; c->outpos = 0; bput(&c->out, h, sizeof(h) - 1); c->sse = 1;
+    } else if (!strcmp(path, "/api/duml/send")) {
+        /* dst, set, id in hex; payload as hex digits; wait in s (default DUML_WAIT, max 5); the reply lists every frame from dst */
+        unsigned dst = 0x3c, set = 0, id = 0; char hex[420] = ""; uint8_t pl[200]; size_t pn = 0; double wait = DUML_WAIT;
+        char kv[460];
+        for (const char *q2 = query; *q2;) {
+            size_t l = strcspn(q2, "&");
+            snprintf(kv, sizeof(kv), "%.*s", (int)(l < sizeof(kv) - 1 ? l : sizeof(kv) - 1), q2);
+            q2 += l + (q2[l] == '&');
+            if (!strncmp(kv, "dst=", 4)) dst = strtoul(kv + 4, NULL, 16);
+            else if (!strncmp(kv, "set=", 4)) set = strtoul(kv + 4, NULL, 16);
+            else if (!strncmp(kv, "id=", 3)) id = strtoul(kv + 3, NULL, 16);
+            else if (!strncmp(kv, "payload=", 8)) snprintf(hex, sizeof(hex), "%s", kv + 8);
+            else if (!strncmp(kv, "wait=", 5)) wait = atof(kv + 5);
+        }
+        for (const char *h = hex; h[0] && h[1] && pn < sizeof(pl); h += 2) { unsigned v; if (sscanf(h, "%2x", &v) != 1) break; pl[pn++] = (uint8_t)v; }
+        if (!duml_send_fn) {
+            static const char off[] = "disabled: start metastreamer with --duml-console\n";
+            respond(c, 404, "text/plain", (const uint8_t *)off, sizeof(off) - 1); return;
+        }
+        if (duml_send_fn((uint8_t)dst, (uint8_t)set, (uint8_t)id, pl, pn) != 0) {
+            respond(c, 503, "application/json", (const uint8_t *)"{\"ok\":false,\"error\":\"no link to goggles\"}", 41); return;
+        }
+        c->duml_wait = 1; c->duml_since = telem_raw_seq(); c->duml_src = (uint8_t)dst; c->duml_t0 = mono();
+        c->duml_for = wait < 0.1 ? 0.1 : wait > 5 ? 5 : wait;
     } else if (!strcmp(path, "/snapshot") || !strcmp(path, "/snapshot.jpg")) {
         if (!hdmi_decoder_running()) { respond(c, 503, "text/plain", (const uint8_t *)"no decoder\n", 11); return; }
         size_t n; unsigned sq; double age;
@@ -665,7 +722,7 @@ int hls_pollfds(struct pollfd *p, int max) {
     for (int i = 0; i < MAX_CONN && k < max; i++) {
         Conn *c = &conns[i];
         if (c->fd < 0) continue;
-        if (!c->live && !c->sse && !c->snap_wait && t - c->t > 15) { conn_close(c); continue; }
+        if (!c->live && !c->sse && !c->snap_wait && !c->duml_wait && t - c->t > 15) { conn_close(c); continue; }
         int pending = c->outpos < c->out.n;
         p[k].fd = c->fd; p[k].events = pending ? POLLOUT : POLLIN; p[k].revents = 0; k++;
     }
@@ -684,7 +741,7 @@ void hls_handle(const struct pollfd *p, int n) {
                 int i; for (i = 0; i < MAX_CONN && conns[i].fd >= 0; i++) {}
                 if (i == MAX_CONN) { close(fd); continue; }
                 Conn *c = &conns[i];
-                c->fd = fd; c->inlen = 0; c->out.n = 0; c->outpos = 0; c->t = mono(); c->live = c->closing = c->wait_key = c->sse = c->snap_wait = 0;
+                c->fd = fd; c->inlen = 0; c->out.n = 0; c->outpos = 0; c->t = mono(); c->live = c->closing = c->wait_key = c->sse = c->snap_wait = c->duml_wait = 0;
             }
             continue;
         }
@@ -703,7 +760,7 @@ void hls_handle(const struct pollfd *p, int n) {
             continue;
         }
         if (p[k].revents & (POLLIN | POLLHUP)) {
-            if (c->live || c->sse || c->snap_wait) {   /* no incoming data expected; 0 = peer closed */
+            if (c->live || c->sse || c->snap_wait || c->duml_wait) {   /* no incoming data expected; 0 = peer closed */
                 char tmp[256]; ssize_t r = recv(c->fd, tmp, sizeof(tmp), 0);
                 if (r == 0 || (r < 0 && errno != EAGAIN && errno != EINTR)) conn_close(c);
                 continue;
@@ -742,6 +799,14 @@ void hls_tick(void) {
             queue_out(c, msg, m);
         }
         last_sse = t;
+    }
+    for (int i = 0; i < MAX_CONN; i++) {
+        Conn *c = &conns[i];
+        if (c->fd < 0 || !c->duml_wait || t - c->duml_t0 < c->duml_for) continue;
+        static char js[16384];
+        size_t n = telem_raw_json(c->duml_since, c->duml_src, js, sizeof(js));
+        c->duml_wait = 0;
+        respond(c, 200, "application/json", (const uint8_t *)js, n);
     }
     for (int i = 0; i < MAX_CONN; i++) {
         Conn *c = &conns[i];

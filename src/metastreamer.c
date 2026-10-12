@@ -372,6 +372,13 @@ static void duml_probe(void) {
     printf("[probe] %02x:%02x sent to %zu addresses\n", probe_set, probe_id, sizeof(dst));
 }
 
+/* /api/duml/send: one request on the goggles' bus; -1 = not registered */
+static int duml_console_send(uint8_t dst, uint8_t set, uint8_t id, const uint8_t *pl, size_t n) {
+    if (!registered) return -1;
+    send_duml(dst, seq++, FLAGS_REQUEST, set, id, pl, n);
+    return 0;
+}
+
 static size_t link_json(char *o, size_t cap) {
     int n = snprintf(o, cap, "{\"registered\":%s,\"video_bytes\":%llu,\"duml_bytes\":%llu,\"goggles_clock\":%s%s%s}",
                      registered ? "true" : "false", port_bytes_video, port_bytes_other,
@@ -389,17 +396,20 @@ static void mark_unplugged(void) {
 int main(int argc, char **argv) {
     /* boot-time helper for metastreamer-wifi: [wifi] in metastreamer.txt -> wpa_supplicant.conf */
     if (argc == 4 && !strcmp(argv[1], "--wifi-conf")) return wifi_gen_conf(argv[2], argv[3]);
-    int http_port = 80, use_hdmi = 1;
+    int http_port = 80, use_hdmi = 1, duml_console = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--no-hdmi")) use_hdmi = 0;
         else if (!strcmp(argv[i], "--http") && i + 1 < argc) http_port = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--hdmi-mode") && i + 1 < argc && hdmi_set_mode(argv[i + 1]) == 0) i++;
         else if (!strcmp(argv[i], "--duml-probe") && i + 1 < argc && sscanf(argv[i + 1], "%x:%x", &probe_set, &probe_id) == 2) i++;
-        else { fprintf(stderr, "usage: %s [--http PORT] [--no-hdmi] [--hdmi-mode WxH[@HZ]|auto] [--duml-probe SET:ID]\n"
+        else if (!strcmp(argv[i], "--duml-console")) duml_console = 1;
+        else { fprintf(stderr, "usage: %s [--http PORT] [--no-hdmi] [--hdmi-mode WxH[@HZ]|auto] [--duml-probe SET:ID] [--duml-console]\n"
                                "       %s --wifi-conf metastreamer.txt wpa_supplicant.conf\n"
                                "  --no-hdmi: no display, decoding for /snapshot stays on\n"
                                "  --hdmi-mode: default 1920x1080 (50 Hz, else 60); auto = display's preferred mode\n"
-                               "  --duml-probe: research, send request SET:ID (hex) to all known addresses, replies in /duml\n", argv[0], argv[0]); return 2; }
+                               "  --duml-probe: research, send request SET:ID (hex) to all known addresses, replies in /duml\n"
+                               "  --duml-console: research, enable /api/duml/send (any request to any device, no login: never on an open network)\n",
+                               argv[0], argv[0]); return 2; }
     }
     signal(SIGPIPE, SIG_IGN);
     conf_load();
@@ -410,6 +420,7 @@ int main(int argc, char **argv) {
     hls_start(http_port);
     hls_set_link_fn(link_json);
     hls_set_camera_fn(cam_set);
+    if (duml_console) hls_set_duml_fn(duml_console_send);
     if (hdmi_start(use_hdmi) == 0) hls_set_au_sink(hdmi_feed_au);   /* always decode (for /snapshot), display depends on the flag */
 
     started = now();

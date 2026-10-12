@@ -56,6 +56,43 @@ static const struct { uint8_t w; const char *n; } FLICKER[] = {{0, "auto"}, {1, 
 
 static unsigned u32le(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned)p[3] << 24); }
 
+#define PUT(...) do { if (o < cap) o += snprintf(out + o, cap - o, __VA_ARGS__); } while (0)
+
+/* raw ring: the last RAW_N frames in full, for the DUML console (/api/duml/send) */
+#define RAW_N 64
+#define RAW_PL 200
+typedef struct { unsigned seq; uint8_t src, dst, resp, set, id, len; uint8_t pl[RAW_PL]; } Raw;
+static Raw raws[RAW_N];
+static unsigned raw_seq;
+
+static void raw_record(uint8_t src, uint8_t dst, int resp, uint8_t set, uint8_t id, const uint8_t *p, size_t n) {
+    unsigned sq = ++raw_seq;
+    Raw *r = &raws[sq % RAW_N];
+    r->seq = sq; r->src = src; r->dst = dst; r->resp = resp; r->set = set; r->id = id;
+    r->len = n > RAW_PL ? RAW_PL : (uint8_t)n;
+    memcpy(r->pl, p, r->len);
+}
+
+unsigned telem_raw_seq(void) { return raw_seq; }
+
+size_t telem_raw_json(unsigned since, uint8_t src, char *out, size_t cap) {
+    size_t o = 0;
+    PUT("[");
+    int first = 1;
+    for (unsigned s = since + 1; s <= raw_seq; s++) {
+        if (raw_seq - s >= RAW_N) continue;   /* overwritten */
+        Raw *r = &raws[s % RAW_N];
+        if (r->seq != s || (src && r->src != src)) continue;
+        PUT("%s{\"src\":\"0x%02x\",\"dst\":\"0x%02x\",\"resp\":%s,\"cmd\":\"%02x:%02x\",\"payload\":\"",
+            first ? "" : ",", r->src, r->dst, r->resp ? "true" : "false", r->set, r->id);
+        for (int i = 0; i < r->len; i++) PUT("%02x", r->pl[i]);
+        PUT("\"}");
+        first = 0;
+    }
+    PUT("]");
+    return o < cap ? o : cap - 1;
+}
+
 static void record(uint8_t src, uint8_t dst, int resp, uint8_t set, uint8_t id, const uint8_t *p, size_t n) {
     Ent *e = NULL;
     for (int i = 0; i < nents; i++)
@@ -74,6 +111,7 @@ static void record(uint8_t src, uint8_t dst, int resp, uint8_t set, uint8_t id, 
 void telem_on_duml(uint8_t src, uint8_t dst, uint8_t flags, uint8_t set, uint8_t id, const uint8_t *p, size_t n) {
     int resp = (flags & 0x80) != 0;
     record(src, dst, resp, set, id, p, n);
+    raw_record(src, dst, resp, set, id, p, n);
     double t = mono();
 
     if (set == 6 && id == 30 && n > 4) { batt = p[4]; batt_t = t; }
@@ -140,7 +178,6 @@ int telem_battery(void) { return (batt >= 0 && mono() - batt_t < STALE) ? batt :
 int telem_link_quality(void) { return (lq >= 0 && mono() - lq_t < STALE) ? lq : -1; }
 int telem_recording(void) { return (rec.valid && mono() - rec.t < STALE) ? rec.recording : -1; }
 
-#define PUT(...) do { if (o < cap) o += snprintf(out + o, cap - o, __VA_ARGS__); } while (0)
 
 size_t telem_json(char *out, size_t cap) {
     size_t o = 0; double t = mono();

@@ -15,6 +15,10 @@ size_t telem_duml_json(char *out, size_t cap);
 int telem_battery(void);
 int telem_link_quality(void);
 int telem_recording(void);
+/* raw frame ring for /api/duml/send: every frame gets a sequence number */
+unsigned telem_raw_seq(void);
+/* JSON array of frames with seq > since, from src (0 = any), as {"src","dst","resp","cmd","payload"} */
+size_t telem_raw_json(unsigned since, uint8_t src, char *out, size_t cap);
 /* 1 = the camera does not push its state, values must be polled */
 int telem_camera_needs_poll(void);
 /* camera frame-rate wire codes <-> fps (30=3, 48=15, 50=5, 60=6, 100=10, 120=7); -1 if unknown */

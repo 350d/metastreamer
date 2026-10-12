@@ -5,7 +5,10 @@
  *
  * Requires: config.txt gpu_mem=128 (full firmware with codecs), dtoverlay=vc4-kms-v3d,cma-128;
  * the bcm2835_codec module must not be blacklisted (DietPi blacklists it by default).
- * Runs in a separate thread; if the decoder falls behind, frames are dropped until the next keyframe.
+ * Runs in a separate thread. Frames go to the screen with non-blocking atomic page flips, newest frame wins:
+ * when the decoder delivers faster than the display refreshes, single frames are skipped at the display and the
+ * decoder never waits for a vblank. Only if the input queue overflows anyway are frames dropped until the next
+ * keyframe. JPEG snapshots are encoded in their own thread.
  */
 #include "hdmi.h"
 
@@ -13,6 +16,7 @@
 #include <drm/drm_fourcc.h>
 #include <drm/drm_mode.h>
 #include <errno.h>
+#include <stdint.h>
 #include <fcntl.h>
 #include <linux/videodev2.h>
 #include <poll.h>
@@ -26,8 +30,8 @@
 #include <unistd.h>
 
 #define NOUT 6
-#define NCAP 8
-#define QN 6
+#define NCAP 10
+#define QN 16
 #define T_OUT V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE
 #define T_CAP V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE
 
@@ -118,6 +122,37 @@ static int drm_open(void) {
     return -1;
 }
 
+/* atomic page flips on the overlay plane */
+static int atomic_ok, need_full = 1;
+static uint32_t p_fb, p_crtc, p_sx, p_sy, p_sw, p_sh, p_cx, p_cy, p_cw, p_ch;
+
+static uint32_t prop_id(uint32_t obj, uint32_t type, const char *name) {
+    struct drm_mode_obj_get_properties gp = {.obj_id = obj, .obj_type = type};
+    if (xioctl(dfd, DRM_IOCTL_MODE_OBJ_GETPROPERTIES, &gp) < 0 || !gp.count_props) return 0;
+    uint32_t *ids = calloc(gp.count_props, 4); uint64_t *vals = calloc(gp.count_props, 8), found = 0;
+    gp.props_ptr = (uintptr_t)ids; gp.prop_values_ptr = (uintptr_t)vals;
+    if (xioctl(dfd, DRM_IOCTL_MODE_OBJ_GETPROPERTIES, &gp) == 0)
+        for (uint32_t i = 0; i < gp.count_props && !found; i++) {
+            struct drm_mode_get_property p = {.prop_id = ids[i]};
+            if (xioctl(dfd, DRM_IOCTL_MODE_GETPROPERTY, &p) == 0 && !strcmp(p.name, name)) found = ids[i];
+        }
+    free(ids); free(vals);
+    return (uint32_t)found;
+}
+
+static void atomic_setup(void) {
+    struct drm_set_client_cap cap = {DRM_CLIENT_CAP_ATOMIC, 1};
+    if (xioctl(dfd, DRM_IOCTL_SET_CLIENT_CAP, &cap) < 0) return;
+    uint32_t t = DRM_MODE_OBJECT_PLANE;
+    p_fb = prop_id(plane_id, t, "FB_ID"); p_crtc = prop_id(plane_id, t, "CRTC_ID");
+    p_sx = prop_id(plane_id, t, "SRC_X"); p_sy = prop_id(plane_id, t, "SRC_Y");
+    p_sw = prop_id(plane_id, t, "SRC_W"); p_sh = prop_id(plane_id, t, "SRC_H");
+    p_cx = prop_id(plane_id, t, "CRTC_X"); p_cy = prop_id(plane_id, t, "CRTC_Y");
+    p_cw = prop_id(plane_id, t, "CRTC_W"); p_ch = prop_id(plane_id, t, "CRTC_H");
+    atomic_ok = p_fb && p_crtc && p_sx && p_sy && p_sw && p_sh && p_cx && p_cy && p_cw && p_ch;
+    if (atomic_ok) fcntl(dfd, F_SETFL, fcntl(dfd, F_GETFL) | O_NONBLOCK);   /* flip events are read after poll() */
+}
+
 static int drm_setup_crtc_and_plane(void) {
     struct drm_mode_create_dumb cd = {.width = mode.hdisplay, .height = mode.vdisplay, .bpp = 32};
     if (xioctl(dfd, DRM_IOCTL_MODE_CREATE_DUMB, &cd) < 0) { perror("[hdmi] create_dumb"); return -1; }
@@ -151,7 +186,8 @@ static int drm_setup_crtc_and_plane(void) {
             if (fm[k] == DRM_FORMAT_YUV420) { plane_id = ids[i]; break; }
     }
     if (!plane_id) { fprintf(stderr, "[hdmi] no plane with YUV420\n"); return -1; }
-    printf("[hdmi] plane %u\n", plane_id);
+    atomic_setup();
+    printf("[hdmi] plane %u, %s\n", plane_id, atomic_ok ? "atomic page flips" : "legacy SETPLANE (blocking)");
     return 0;
 }
 
@@ -190,7 +226,9 @@ static int qbuf(int type, int idx, uint32_t bytesused) {
     return xioctl(vfd, VIDIOC_QBUF, &b);
 }
 
+static void flips_settle(void);
 static void cap_release(void) {
+    if (display) flips_settle();
     if (cap_streaming) { int t = T_CAP; xioctl(vfd, VIDIOC_STREAMOFF, &t); cap_streaming = 0; }
     for (int i = 0; i < ncap; i++) {
         if (cap_fb[i]) { xioctl(dfd, DRM_IOCTL_MODE_RMFB, &cap_fb[i]); cap_fb[i] = 0; }
@@ -275,17 +313,98 @@ static int v4l2_setup(void) {
     return cap_setup();
 }
 
+static void fit(uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h) {
+    uint32_t mw = mode.hdisplay, mh = mode.vdisplay;
+    *w = mw; *h = (uint64_t)mw * vis_h / vis_w;
+    if (*h > mh) { *h = mh; *w = (uint64_t)mh * vis_w / vis_h; }
+    *x = (mw - *w) / 2; *y = (mh - *h) / 2;
+}
+
+/* legacy path (no atomic): blocks until the next vblank */
 static void show(int idx) {
-    uint32_t mw = mode.hdisplay, mh = mode.vdisplay, w = mw, h = (uint64_t)mw * vis_h / vis_w;
-    if (h > mh) { h = mh; w = (uint64_t)mh * vis_w / vis_h; }
+    uint32_t x, y, w, h; fit(&x, &y, &w, &h);
     struct drm_mode_set_plane sp = {.plane_id = plane_id, .crtc_id = crtc_id, .fb_id = cap_fb[idx],
-        .crtc_x = (int)(mw - w) / 2, .crtc_y = (int)(mh - h) / 2, .crtc_w = w, .crtc_h = h,
+        .crtc_x = (int)x, .crtc_y = (int)y, .crtc_w = w, .crtc_h = h,
         .src_x = 0, .src_y = 0, .src_w = vis_w << 16, .src_h = vis_h << 16};
     int ok = xioctl(dfd, DRM_IOCTL_MODE_SETPLANE, &sp) == 0;
     if (ok) n_shown++;
     int back = ok ? shown : idx;
     if (ok) shown = idx;
     if (back >= 0) qbuf(T_CAP, back, 0);
+}
+
+/* atomic path: `shown` is on screen, `in_flight` waits for its vblank, `waiting` holds up to WAIT_MAX decoded
+ * frames, one per vblank: radio jitter (two frames within one refresh, then none) is absorbed instead of
+ * turning into a skip plus a repeat. Beyond WAIT_MAX the oldest waiting frame is skipped (bounded latency). */
+#define WAIT_MAX 3
+static int in_flight = -1, waiting[WAIT_MAX], nwait;
+static unsigned long long n_skip;
+
+static int flip(int idx) {
+    uint32_t props[10], n = 0; uint64_t vals[10];
+    props[n] = p_fb; vals[n++] = cap_fb[idx];
+    if (need_full) {
+        uint32_t x, y, w, h; fit(&x, &y, &w, &h);
+        props[n] = p_crtc; vals[n++] = crtc_id;
+        props[n] = p_sx; vals[n++] = 0; props[n] = p_sy; vals[n++] = 0;
+        props[n] = p_sw; vals[n++] = (uint64_t)vis_w << 16; props[n] = p_sh; vals[n++] = (uint64_t)vis_h << 16;
+        props[n] = p_cx; vals[n++] = x; props[n] = p_cy; vals[n++] = y;
+        props[n] = p_cw; vals[n++] = w; props[n] = p_ch; vals[n++] = h;
+    }
+    uint32_t objs[1] = {plane_id}, counts[1] = {n};
+    struct drm_mode_atomic a = {.flags = DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT, .count_objs = 1,
+        .objs_ptr = (uintptr_t)objs, .count_props_ptr = (uintptr_t)counts, .props_ptr = (uintptr_t)props,
+        .prop_values_ptr = (uintptr_t)vals, .user_data = (uint64_t)idx};
+    if (xioctl(dfd, DRM_IOCTL_MODE_ATOMIC, &a) < 0) return -1;
+    need_full = 0;
+    return 0;
+}
+
+static void present(int idx) {
+    if (!atomic_ok) { show(idx); return; }
+    if (in_flight >= 0) {   /* a flip is pending: the frame waits its turn */
+        if (nwait == WAIT_MAX) {
+            qbuf(T_CAP, waiting[0], 0); n_skip++;
+            memmove(waiting, waiting + 1, (WAIT_MAX - 1) * sizeof(int)); nwait--;
+        }
+        waiting[nwait++] = idx;
+        return;
+    }
+    if (flip(idx) == 0) { in_flight = idx; return; }
+    perror("[hdmi] atomic flip, falling back to SETPLANE");
+    atomic_ok = 0;
+    show(idx);
+}
+
+static void flip_done(void) {
+    if (in_flight < 0) return;
+    if (shown >= 0) qbuf(T_CAP, shown, 0);
+    shown = in_flight; in_flight = -1; n_shown++;
+    if (nwait) {
+        int k = waiting[0];
+        memmove(waiting, waiting + 1, (WAIT_MAX - 1) * sizeof(int)); nwait--;
+        present(k);
+    }
+}
+
+static void drm_events(void) {
+    char buf[256];
+    ssize_t n = read(dfd, buf, sizeof(buf));
+    for (ssize_t o = 0; n > 0 && o + (ssize_t)sizeof(struct drm_event) <= n;) {
+        struct drm_event *e = (struct drm_event *)(buf + o);
+        if (e->length < sizeof(*e)) break;
+        if (e->type == DRM_EVENT_FLIP_COMPLETE) flip_done();
+        o += e->length;
+    }
+}
+
+/* before the capture buffers are replaced: let a pending flip land */
+static void flips_settle(void) {
+    for (int i = 0; atomic_ok && in_flight >= 0 && i < 10; i++) {
+        struct pollfd p = {dfd, POLLIN, 0};
+        if (poll(&p, 1, 20) > 0) drm_events();
+    }
+    in_flight = -1; nwait = 0; need_full = 1;
 }
 
 /* ---------------- JPEG snapshots (hardware encoder bcm2835-codec-encode_image) ---------------- */
@@ -339,20 +458,47 @@ static int jpeg_setup(void) {
     return 0;
 }
 
+static void jpeg_encode(uint32_t n);
 static void jqbuf(int type, uint32_t bytes) {
     struct v4l2_plane pl[1] = {{0}}; pl[0].bytesused = bytes;
     struct v4l2_buffer b = {.type = type, .memory = V4L2_MEMORY_MMAP, .index = 0, .m.planes = pl, .length = 1};
     xioctl(jfd, VIDIOC_QBUF, &b);
 }
 
+static pthread_mutex_t jm = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t jc = PTHREAD_COND_INITIALIZER;
+static int jbusy; static uint32_t jbytes;
+
+/* decoder thread: copy the frame for the encoder (a few ms); the encoding runs in jpeg_thread */
 static void do_snapshot(int idx) {
-    snap_req = 0;
     if (!jready && !jfailed) { if (jpeg_setup() == 0) jready = 1; else jfailed = 1; }
-    if (!jready || !cap_map[idx]) { if (wake_pipe[1] >= 0) (void)!write(wake_pipe[1], "e", 1); return; }
+    if (!jready || !cap_map[idx]) { snap_req = 0; if (wake_pipe[1] >= 0) (void)!write(wake_pipe[1], "e", 1); return; }
+    pthread_mutex_lock(&jm);
+    if (jbusy) { pthread_mutex_unlock(&jm); return; }   /* try again with a later frame */
+    snap_req = 0;
     uint32_t n = buf_bpl * buf_h * 3 / 2;
     if (n > cap_len[idx]) n = cap_len[idx];
     if (n > jin_len) n = jin_len;
     memcpy(jin_map, cap_map[idx], n);
+    jbytes = n; jbusy = 1;
+    pthread_cond_signal(&jc);
+    pthread_mutex_unlock(&jm);
+}
+
+static void *jpeg_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&jm);
+        while (!jbusy) pthread_cond_wait(&jc, &jm);
+        uint32_t n = jbytes;
+        pthread_mutex_unlock(&jm);
+        jpeg_encode(n);
+        pthread_mutex_lock(&jm); jbusy = 0; pthread_mutex_unlock(&jm);
+    }
+    return NULL;
+}
+
+static void jpeg_encode(uint32_t n) {
     jqbuf(T_CAP, 0);
     jqbuf(T_OUT, n);
     struct pollfd p = {jfd, POLLIN, 0};
@@ -406,8 +552,10 @@ void hdmi_feed_au(const uint8_t *d, size_t n, int key) {
 static void *worker(void *arg) {
     (void)arg;
     for (;;) {
-        struct pollfd p = {vfd, POLLIN | POLLOUT | POLLPRI, 0};
-        poll(&p, 1, 5);
+        struct pollfd pp[2] = {{vfd, POLLIN | POLLOUT | POLLPRI, 0}, {dfd, POLLIN, 0}};
+        poll(pp, display && atomic_ok ? 2 : 1, 5);
+        if (display && atomic_ok && (pp[1].revents & POLLIN)) drm_events();
+        struct pollfd p = pp[0];
         if (p.revents & POLLPRI) {
             struct v4l2_event ev;
             while (xioctl(vfd, VIDIOC_DQEVENT, &ev) == 0)
@@ -420,7 +568,7 @@ static void *worker(void *arg) {
             if (pl[0].bytesused == 0 || (b.flags & V4L2_BUF_FLAG_ERROR)) { qbuf(T_CAP, b.index, 0); continue; }
             n_dec++;
             if (snap_req) do_snapshot(b.index);
-            if (display) show(b.index); else qbuf(T_CAP, b.index, 0);
+            if (display) present(b.index); else qbuf(T_CAP, b.index, 0);
         }
         for (;;) {
             struct v4l2_plane pl[1] = {{0}};
@@ -459,6 +607,8 @@ static void *init_and_run(void *arg) {
         usleep(500000);
     }
     if (v4l2_setup() < 0) return NULL;
+    pthread_t jt;
+    if (pthread_create(&jt, NULL, jpeg_thread, NULL) == 0) pthread_detach(jt);
     running = 1;
     return worker(NULL);
 }
@@ -476,13 +626,13 @@ int hdmi_decoder_running(void) { return running; }
 
 void hdmi_stats(char *out, size_t cap) {
     if (!running) { snprintf(out, cap, "hdmi off"); return; }
-    snprintf(out, cap, "hdmi%s in=%llu dec=%llu shown=%llu drop=%llu snaps=%llu", display ? "" : "(no display)",
-             n_in, n_dec, n_shown, n_drop, n_snaps);
+    snprintf(out, cap, "hdmi%s in=%llu dec=%llu shown=%llu skip=%llu drop=%llu snaps=%llu", display ? "" : "(no display)",
+             n_in, n_dec, n_shown, n_skip, n_drop, n_snaps);
 }
 
 size_t hdmi_json(char *out, size_t cap) {
-    int n = snprintf(out, cap, "{\"decoder\":%s,\"display\":%s,\"mode\":\"%ux%u@%u\",\"decoded\":%llu,\"shown\":%llu,"
-                     "\"dropped\":%llu,\"snapshots\":%llu}", running ? "true" : "false", display ? "true" : "false",
-                     mode.hdisplay, mode.vdisplay, mode.vrefresh, n_dec, n_shown, n_drop, n_snaps);
+    int n = snprintf(out, cap, "{\"decoder\":%s,\"display\":%s,\"mode\":\"%ux%u@%u\",\"flips\":\"%s\",\"decoded\":%llu,\"shown\":%llu,"
+                     "\"skipped\":%llu,\"dropped\":%llu,\"snapshots\":%llu}", running ? "true" : "false", display ? "true" : "false",
+                     mode.hdisplay, mode.vdisplay, mode.vrefresh, atomic_ok ? "atomic" : "legacy", n_dec, n_shown, n_skip, n_drop, n_snaps);
     return n < (int)cap ? (size_t)n : cap - 1;
 }

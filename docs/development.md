@@ -25,14 +25,14 @@ A reboot brings back the version in the image.
 ## Options
 
 ```
-metastreamer [--http PORT] [--no-hdmi] [--hdmi-mode WxH[@HZ]|auto] [--duml-probe SET:ID]
+metastreamer [--http PORT] [--no-hdmi] [--hdmi-mode WxH[@HZ]|auto] [--duml-probe SET:ID] [--duml-console]
 metastreamer --wifi-conf metastreamer.txt wpa_supplicant.conf
 ```
 
 - `--no-hdmi`: no display; the decoder still runs for `/snapshot`
 - `--hdmi-mode`: default 1920×1080 at 50 Hz (else 60); `auto` takes the display's preferred mode
   (capture cards often prefer 720p)
-- `--duml-probe`: see [protocol.md](protocol.md#research-aids)
+- `--duml-probe`, `--duml-console`: see [protocol.md](protocol.md#research-aids)
 - `--wifi-conf`: used at boot by `metastreamer-wifi` to turn the `[wifi]` section into a `wpa_supplicant` config
 
 ## Source

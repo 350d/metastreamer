@@ -24,4 +24,7 @@ void hls_set_link_fn(json_fn f);
 /* camera settings from /api/set?key=value: 0 ok, -1 bad value, -2 bad key, -3 no link */
 typedef int (*set_fn)(const char *key, const char *value);
 void hls_set_camera_fn(set_fn f);
+/* research console /api/duml/send?dst=3c&set=00&id=b7&payload=hex: send one DUML request, 0 = sent */
+typedef int (*duml_fn)(uint8_t dst, uint8_t set, uint8_t id, const uint8_t *payload, size_t len);
+void hls_set_duml_fn(duml_fn f);
 #endif
