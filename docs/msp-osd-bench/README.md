@@ -46,13 +46,14 @@ Python 3 with `pyserial` and `Pillow`.
 ## Status of the scripts
 
 The numbers below come from a first version of `fastlab.py` that was a scratch script. The published `fastlab.py` is a
-cleaned-up rewrite of it: the trial and bisection logic is the same, the groups were rebuilt. Its first clean run in INAV
-mode gave 537, 326 and 407 as the original did, but 461 instead of 526 for rows of 50: one lost frame was read as
-"discarded" and moved the bisection down. A frame now counts as discarded only after two attempts in a row, and a single
-differing number in a group is a reason to run the group again. The Betaflight-mode runs of the rewrite are still being
-checked, so if you get other numbers from the groups there, trust the table below and the captures, and please open an
-issue. `msplab.py` and `osdrate.py` differ from the ones used only in their default serial port and snapshot address.
-Do not run the bench while another program draws on the same OSD.
+cleaned-up rewrite of it: the trial and bisection logic is the same, the groups were rebuilt. In Betaflight mode one run
+of `core` and a spot check of the glyph pass (`G1 --codes 0x00,0x01,0x06,0x7F,0x80,0x9C,0xFF`) with this version gave 637,
+620, 361 and 459 as before, with clean control frames, and none of those glyphs costs more than an X. In INAV mode the
+first run of the rewrite gave 461 instead of 526 for rows of 50: one lost frame was read as "discarded" and moved the
+bisection down. A frame now counts as discarded only after two attempts in a row; INAV mode was not run again with this
+version, the original script gave 537, 526, 326 and 407 twice. If a single number of a group differs from the table
+below, run the group again before believing it. `msplab.py` and `osdrate.py` differ from the ones used only in their
+default serial port and snapshot address. Do not run the bench while another program draws on the same OSD.
 
 ## How a measurement works
 
