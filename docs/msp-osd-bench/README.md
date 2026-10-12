@@ -1,0 +1,108 @@
+# MSP OSD bench: what a DJI O3 / Goggles 2 really does with a flight controller's OSD
+
+A bench for measuring how DJI goggles treat the OSD that a flight controller sends over MSP DisplayPort. It was built to
+find out why some Betaflight OSD layouts freeze on DJI goggles, and its results back the Betaflight pull request
+"MSP displayport: keep screens within the DJI O3/Goggles 2 load limit".
+
+metastreamer is the eye of the bench: it shows the goggles' own picture, with the OSD composited in, as a JPEG at
+`/snapshot`. The bench plays the part of the flight controller, draws a test pattern, takes a snapshot and decides
+from the picture whether the goggles showed it.
+
+![The rig](images/rig.jpg)
+
+## Setup
+
+```
+ Mac (fake flight controller)     O3 Air Unit            Goggles 2                Raspberry Pi Zero W
+ msplab.py / fastlab.py   ---->   UART 115200   ~~~~>    render the OSD   --USB-->  metastreamer
+ MSP v1: answers the polls,       (the air unit          over the live            JPEG /snapshot
+ sends MSP_DISPLAYPORT             proxies the MSP        picture                       |
+        ^                          to the goggles)                                     |
+        +---------------------------- HTTP /snapshot, pixel comparison ----------------+
+```
+
+- **Fake flight controller.** A 3.3 V USB-UART adapter (FTDI, CP2102 or CH340, not 5 V and not RS-232) on the air
+  unit's flight controller connector: air unit TX to adapter RX, air unit RX to adapter TX, common ground, 115200 baud.
+  Power the air unit separately, from a battery or a bench supply on its power pads, with a fan on it.
+- **Goggles.** DJI Goggles 2 bound to the air unit. In the goggles' menu: Canvas Mode = HD (53x20), and Flight
+  Controller = Betaflight (or INAV for the INAV runs). The goggles accept DisplayPort only about 8 s after a new MSP
+  session starts; the scripts keep drawing a marker until then.
+- **metastreamer.** A Pi Zero W on the goggles' USB-C port, see the [main README](../../README.md). Only
+  `/snapshot` is needed. HDMI out to a capture stick is optional, it is only for watching the goggles' screen live.
+
+Tested with an O3 Air Unit (firmware 2024-07) and Goggles 2 (firmware 2025-02).
+
+## Scripts
+
+Python 3 with `pyserial` and `Pillow`.
+
+| File | What it does |
+| --- | --- |
+| `msplab.py` | The fake flight controller. Answers the air unit's MSP polls like Betaflight 4.5, disarmed, keeps a DisplayPort session alive, and runs short experiments (sub-commands, attributes, canvas, font pages, persistence, MSP v2 and more), each with snapshots and a contact sheet. Also the library of the other two. |
+| `fastlab.py` | Finds how much OSD the goggles accept in one frame, by bisection. Read its docstring first. |
+| `osdrate.py` | How fast the goggles really redraw, and whether the frames tear. |
+| `streams/` | Raw MSP byte streams of real Betaflight OSD frames, see `streams/README.txt`. |
+
+## Status of the scripts
+
+The numbers below come from a first version of `fastlab.py` that was a scratch script. The published `fastlab.py` is a
+cleaned-up rewrite of it: the trial and bisection logic is the same, the groups were rebuilt. In INAV mode the rewrite
+gave the same results (537 and 526 for solid rows, 326 shown and 327 dropped for cells two columns apart). The
+Betaflight-mode runs of the rewrite are still being checked, so if you get other numbers from the groups there, trust
+the table below and the captures, and please open an issue. `msplab.py` and `osdrate.py` differ from the ones used only
+in their default serial port and snapshot address. Do not run the bench while another program draws on the same OSD.
+
+## How a measurement works
+
+The goggles silently throw away a whole frame (`CLEAR_SCREEN` ... `DRAW_SCREEN`) that carries too much, and go on
+showing the previous one. `fastlab.py` draws a label `PREVIOUS FRAME` at row 19, column 38, waits until the snapshot
+shows it, sends the test frame, and polls the snapshot: label gone means shown, label still there after 1.9 s means
+discarded. Test frames never touch row 19. Byte streams may cover the label, so they are judged by pixel difference
+against the reference screen instead. A limit is the largest N still shown, found by bisection, and the frames at N and
+N + 1 are saved as `...-N-ok.jpg` and `...-N+1-drop.jpg`. Unless said otherwise, a test frame is N single-glyph
+`WRITE`s.
+
+```
+python3 fastlab.py core                     # the headline numbers below
+python3 fastlab.py G1                       # every glyph code 0x00-0xFF
+python3 fastlab.py V I R                    # the byte streams of real frames
+python3 fastlab.py --mode inav --prefix inav- core I attr    # after switching the goggles to INAV
+```
+
+Pass `--port` for the UART and `--snapshot` for the metastreamer address if they differ from the defaults.
+
+## Results
+
+HD canvas, 53 columns by 20 rows. N is the number of cells written since the last `CLEAR_SCREEN`.
+
+| Layout | Betaflight mode | INAV mode |
+| --- | --- | --- |
+| Solid rows of 53 cells from column 0 | 637 | 537 |
+| Solid rows of 50 cells from column 2 | 620 | 526 |
+| Single cells two columns apart, 26 per row | 361 | 326 |
+| Pairs of cells with one blank cell between, 17 per row | 459 | 407 |
+
+The limit is not a plain count of cells. Other things that were measured:
+
+- Spaces count like any other cell. Rewriting a cell is free. Erasing with spaces gives nothing back. Only a clear frees.
+- The order of the writes does not matter.
+- No glyph code costs more than about 1% over an X (all 256 were checked). Codes 1 and 6 cost about 0.75.
+- Solid rows of 40 to 52 cells: 617 to 629 cells. Runs of 2, 3, 5, 10 and 25 cells with one blank between: 471, 512, 563,
+  586 and 613. Pairs with a three-cell gap: 396.
+- `WRITE_STRING` draws 32 characters, a string past column 52 continues on the next row.
+- About 30 to 40 `DRAW_SCREEN`/s are rendered, more only queue up, and latency grows to 5 s at 100 Hz.
+- Ignored: `MSP_DP_SYS`, blink, `MSP_DP_OPTIONS`, `MSP_DP_FONTCHAR_WRITE`, sub-commands 7 to 255, MSP v2,
+  `MSP_SET_OSD_CANVAS` and `MSP_OSD_CANVAS` pushed by the flight controller.
+- In INAV mode font page 0 is the INAV font, page 1 holds other INAV symbols and pages 2 and 3 are empty, so with
+  Betaflight's default `displayport_msp_fonts = 0,1,2,3` info text is garbage and warnings are not visible.
+
+![Frame A through the old driver and the new one](images/compare-A.jpg)
+![Frame B](images/compare-B.jpg)
+![620 cells shown, 621 discarded](images/limit-solid.jpg)
+![Spaces count](images/spaces-count.jpg)
+![INAV mode: the font pages](images/inav-attr-pages.jpg)
+
+The raw captures of this series, about 80 snapshots with their logs, are in the release
+[msp-osd-bench-2026-10-12](https://github.com/350d/metastreamer/releases/tag/msp-osd-bench-2026-10-12).
+
+metastreamer is an independent project. It is not affiliated with, endorsed by or connected to DJI.
