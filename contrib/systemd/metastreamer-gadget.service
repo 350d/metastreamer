@@ -1,0 +1,15 @@
+[Unit]
+Description=metastreamer USB gadget (Android accessory for the goggles)
+DefaultDependencies=no
+After=sys-kernel-config.mount systemd-modules-load.service
+Requires=sys-kernel-config.mount
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/metastreamer-gadget
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,23 @@
+image boot.vfat {
+	vfat {
+		label = "METASTREAM"
+		files = {
+#BOOT_FILES#
+		}
+	}
+	size = 48M
+}
+
+image sdcard.img {
+	hdimage {
+	}
+	partition boot {
+		partition-type = 0xC
+		bootable = "true"
+		image = "boot.vfat"
+	}
+	partition rootfs {
+		partition-type = 0x83
+		image = "rootfs.squashfs"
+	}
+}

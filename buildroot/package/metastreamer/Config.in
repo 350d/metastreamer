@@ -1,0 +1,10 @@
+config BR2_PACKAGE_METASTREAMER
+	bool "metastreamer"
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	help
+	  Video, telemetry and camera settings from DJI FPV goggles over
+	  USB, to HDMI (hardware H.264 decode) and to the browser
+	  (low-latency fMP4, HLS).
+
+comment "metastreamer needs a toolchain w/ threads"
+	depends on !BR2_TOOLCHAIN_HAS_THREADS

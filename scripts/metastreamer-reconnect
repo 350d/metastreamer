@@ -1,0 +1,23 @@
+#!/bin/sh
+# metastreamer-reconnect: run before every bridge start except the first one after boot.
+#
+# Cable pulled since the last session (metastreamer left /run/metastreamer.unplugged) or still out:
+#   just wait for the goggles to enumerate us; on replug they see a fresh device and talk at once.
+# Cable stayed in (bridge restarted): the goggles keep their old accessory session and stay silent.
+#   Measured on Goggles 2: a single off-bus period of 3..15 s does not help;
+#   15 s off, 2 s on, 3 s off, then connect works every time.
+U=$(ls -d /sys/class/udc/* 2>/dev/null | head -1)
+[ -n "$U" ] || exit 0
+S=$U/soft_connect
+state() { cat "$U/state" 2>/dev/null; }
+
+if [ -e /run/metastreamer.unplugged ] || [ "$(state)" != configured ]; then
+	rm -f /run/metastreamer.unplugged
+	while [ "$(state)" != configured ]; do sleep 1; done
+	exit 0
+fi
+
+echo disconnect > "$S"; sleep 15
+echo connect > "$S"; sleep 2
+echo disconnect > "$S"; sleep 3
+echo connect > "$S"; sleep 1

@@ -1,0 +1,59 @@
+#!/bin/sh
+# Start all init scripts in /etc/init.d in numerical order and show the boot on the console:
+# a title, one line per script with a status mark, and a progress bar under the list.
+# The scripts' own output goes to /run/boot.log.
+
+LOG=/run/boot.log
+E=$(printf '\033')
+PAD="      "
+OK="${E}[42m  ${E}[0m"      # green square
+FAIL="${E}[41m  ${E}[0m"    # red square
+DIM="${E}[90m"; BOLD="${E}[1;97m"; RST="${E}[0m"; CLR="${E}[K"
+BAR=36
+
+label() {
+	case "${1#*/S??}" in
+	clock) echo "Clock" ;;
+	syslogd) echo "System log" ;;
+	klogd) echo "Kernel log" ;;
+	sysctl) echo "Kernel settings" ;;
+	watchdog) echo "Watchdog" ;;
+	metastreamer) echo "metastreamer" ;;
+	wifi) echo "Wi-Fi" ;;
+	network) echo "Network" ;;
+	sshd) echo "SSH" ;;
+	*) echo "${1#*/S??}" ;;
+	esac
+}
+
+# progress bar: filled part cyan, the rest blue; $1 done, $2 total, $3 what runs now
+bar() {
+	f=$(( $1 * BAR / $2 ))
+	printf '\r%s%s%*s%s%*s%s  %s%d/%d  %s%s%s' "$PAD" "${E}[46m" "$f" "" "${E}[44m" "$((BAR - f))" "" "$RST" \
+		"$DIM" "$1" "$2" "$3" "$RST" "$CLR"
+}
+
+set -- /etc/init.d/S??*
+total=$#
+done=0
+
+printf '%s[?25l%s[2J%s[H\n\n\n' "$E" "$E" "$E"
+printf '%s%sMETASTREAMER%s\n' "$PAD" "$BOLD" "$RST"
+printf '%s%sgoggles video to HDMI and Wi-Fi%s\n\n\n' "$PAD" "$DIM" "$RST"
+
+for i in "$@"; do
+	[ -f "$i" ] || continue   # dangling symlink
+	name=$(label "$i")
+	bar "$done" "$total" "$name..."
+	echo "=== $i" >> $LOG
+	case "$i" in
+		*.sh) ( trap - INT QUIT TSTP; set start; . "$i" ) >> $LOG 2>&1 ;;
+		*) "$i" start >> $LOG 2>&1 ;;
+	esac
+	st=$?
+	done=$((done + 1))
+	if [ $st -eq 0 ]; then mark=$OK; else mark=$FAIL; fi
+	printf '\r%s%s  %s%s\n' "$PAD" "$mark" "$name" "$CLR"
+done
+bar "$done" "$total" "ready"
+printf '\n'

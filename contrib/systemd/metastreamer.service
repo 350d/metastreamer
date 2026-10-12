@@ -1,0 +1,20 @@
+[Unit]
+Description=metastreamer: goggles over USB -> HDMI and HTTP (fMP4 live, HLS)
+DefaultDependencies=no
+After=metastreamer-gadget.service
+Requires=metastreamer-gadget.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+# on REstart: metastreamer-reconnect makes the goggles open a new session (see the script);
+# on the first start after boot the gadget is fresh, nothing to do (the flag in /run lives until reboot)
+ExecStartPre=/bin/sh -c 'if [ -e /run/metastreamer.started ]; then /usr/local/bin/metastreamer-reconnect; fi; touch /run/metastreamer.started'
+# metastreamer-reconnect waits for the cable as long as it takes
+TimeoutStartSec=infinity
+ExecStart=/bin/sh -c 'stty -F /dev/ttyGS0 raw -echo; exec /usr/local/bin/metastreamer'
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=sysinit.target

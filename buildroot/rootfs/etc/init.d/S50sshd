@@ -1,0 +1,23 @@
+#!/bin/sh
+# sshd. Host key: baked into the image (buildroot/local), or made on the first boot and kept on the SD card's
+# boot partition, so it stays the same across reboots. Public keys: baked in, or /boot/authorized_keys.
+KEY=/run/ssh_host_ed25519_key
+case "$1" in
+start)
+	if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+		if [ -f /boot/ssh_host_ed25519_key ]; then
+			cp /boot/ssh_host_ed25519_key $KEY
+		else
+			ssh-keygen -q -t ed25519 -N "" -C metastreamer -f $KEY
+			mount -o remount,rw /boot && cp $KEY /boot/ssh_host_ed25519_key && cp $KEY.pub /boot/ssh_host_ed25519_key.pub && sync
+			mount -o remount,ro /boot
+		fi
+		chmod 600 $KEY
+	fi
+	printf "Starting sshd: "
+	/usr/sbin/sshd && echo OK || echo FAIL
+	;;
+stop)
+	killall sshd 2>/dev/null
+	;;
+esac

@@ -1,0 +1,12 @@
+# metastreamer settings.
+# timezone: IANA name such as Europe/Tallinn; the goggles' clock is set to this local time.
+# timezone_auto: yes = follow the browser that opens /settings, no = chosen by hand.
+timezone = 
+timezone_auto = yes
+
+# network: dhcp, or static with address (a.b.c.d, or a.b.c.d/prefix; default /24), gateway and dns.
+# A wrong static address makes the bridge unreachable: set network = dhcp here to undo it.
+network = dhcp
+address = 
+gateway = 
+dns = 

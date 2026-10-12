@@ -1,0 +1,16 @@
+start_file=start.elf
+fixup_file=fixup.dat
+kernel=zImage
+disable_overscan=1
+# full VideoCore firmware with codecs
+gpu_mem_256=128
+gpu_mem_512=128
+# KMS + CMA for decoder buffers; USB in device (gadget) mode
+dtoverlay=vc4-kms-v3d,cma-128,noaudio
+dtoverlay=dwc2,dr_mode=peripheral
+# serial console on ttyAMA0
+dtoverlay=miniuart-bt
+# fast boot
+boot_delay=0
+disable_splash=1
+initial_turbo=20

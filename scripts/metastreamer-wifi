@@ -1,0 +1,128 @@
+#!/bin/sh
+# metastreamer-wifi: Wi-Fi from wifi.txt on the SD card boot partition (the file is never deleted).
+#   metastreamer-wifi start    at boot: load the driver, build the config, connect;
+#                     then wifi.log on the card: the address, or after 60 s a report (no passwords in it);
+#                     time from NTP as soon as there is an address
+#   metastreamer-wifi reload   after /settings rewrote wifi.txt: re-read the config,
+#                     new DHCP lease if the bridge moved to another network
+#   metastreamer-wifi net      after /settings changed the address: DHCP or static from metastreamer.txt
+TXT=/boot/wifi.txt
+BRIDGE=/boot/metastreamer.txt   # network = dhcp | static, address = a.b.c.d/prefix, gateway, dns
+CONF=/run/wpa_supplicant.conf
+WPA_PID=/run/wpa_supplicant.pid
+DHCP_PID=/run/udhcpc.wlan0.pid
+OUT=/run/wifi.out   # daemons' own output: a file, not a pipe (a daemon keeps a pipe open forever)
+
+log() { logger -t wifi "$*"; }
+running() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+ssid() { iw dev wlan0 link 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p'; }
+# a static address is there before the association, so also require the link
+has_ip() { ip -4 addr show wlan0 2>/dev/null | grep -q "inet " && iw dev wlan0 link 2>/dev/null | grep -q "^Connected"; }
+cfg() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" $BRIDGE 2>/dev/null | tr -d '\r' | tail -1 | sed 's/[[:space:]]*$//'; }
+gen() { /usr/bin/metastreamer --wifi-conf "$TXT" "$CONF" >>$OUT 2>&1; }
+
+# address: static (no waiting for DHCP) or DHCP
+net() {
+	addr=$(cfg address)
+	case "$addr" in */*) ;; ?*) addr="$addr/24" ;; esac   # no prefix: /24
+	if [ "$(cfg network)" = static ] && [ -n "$addr" ]; then
+		running $DHCP_PID && kill "$(cat $DHCP_PID)" && sleep 0.3
+		gw=$(cfg gateway); dns=$(cfg dns)
+		ip addr flush dev wlan0
+		ip link set wlan0 up
+		ip addr add "$addr" dev wlan0
+		[ -n "$gw" ] && ip route replace default via "$gw" dev wlan0
+		[ -n "${dns:-$gw}" ] && echo "nameserver ${dns:-$gw}" > /run/resolv.conf
+		log "static address $addr${gw:+ via $gw}"
+	elif ! running $DHCP_PID; then
+		ip addr flush dev wlan0
+		udhcpc -b -S -i wlan0 -p $DHCP_PID -x hostname:metastreamer >>$OUT 2>&1
+	fi
+}
+
+up() {
+	running $WPA_PID || wpa_supplicant -B -i wlan0 -c $CONF -P $WPA_PID -f /run/wpa_supplicant.log >>$OUT 2>&1
+	iw dev wlan0 set power_save off 2>/dev/null
+	net
+}
+
+# wifi.log on the card (written once per boot)
+save_log() {
+	mount -o remount,rw /boot && cp /run/wifi.log /boot/wifi.log && sync
+	mount -o remount,ro /boot
+}
+
+connected() {
+	{
+		echo "metastreamer-wifi: connected $(cut -d' ' -f1 /proc/uptime) s after boot"
+		iw dev wlan0 link 2>&1 | grep -E "SSID|freq|signal"
+		ip -4 addr show wlan0 2>&1 | grep inet
+	} > /run/wifi.log 2>&1
+	save_log
+}
+
+ntp() {
+	killall -0 ntpd 2>/dev/null && return
+	ntpd -S /usr/bin/metastreamer-ntp-hook -p 0.pool.ntp.org -p 1.pool.ntp.org -p time.cloudflare.com && log "ntpd started"
+}
+
+watch() {
+	for i in $(seq 1 60); do has_ip && break; sleep 1; done
+	if has_ip; then connected; else report; fi
+	while ! has_ip; do sleep 5; done
+	ntp
+}
+
+report() {
+	{
+		echo "metastreamer-wifi: no IP address $(cut -d' ' -f1 /proc/uptime) s after boot"
+		n=$(grep -c '^network=' $CONF 2>/dev/null)
+		echo "--- wifi.txt: $([ -f $TXT ] && echo present || echo MISSING), networks in config: ${n:-0}"
+		[ "${n:-0}" = 0 ] && echo "!!! no networks: add a line 'name = password' to wifi.txt on the SD card"
+		echo "--- wlan0"
+		ip addr show wlan0 2>&1
+		iw dev wlan0 link 2>&1
+		iw reg get 2>&1 | head -12
+		echo "--- daemons"
+		ps | grep -E "wpa_supplicant|udhcpc" | grep -v grep
+		cat $OUT 2>/dev/null
+		echo "--- wpa_supplicant"
+		tail -40 /run/wpa_supplicant.log 2>/dev/null
+		echo "--- networks in range"
+		{ iw dev wlan0 scan 2>/dev/null || iw dev wlan0 scan dump 2>&1; } | grep -E "^BSS|SSID:|signal:|freq:|primary channel|RSN|WPA" | head -120
+		echo "--- kernel"
+		dmesg | grep -i -E "brcm|wlan|cfg80211|mmc1|firmware" | tail -40
+		echo "--- log"
+		grep -i -E "wifi|wpa|udhcpc|wlan" /var/log/messages 2>/dev/null | tail -60
+	} > /run/wifi.log 2>&1
+	save_log
+	log "no address: report written to wifi.log on the SD card"
+}
+
+case "$1" in
+start)
+	# the watcher runs on its own, so the log is written even if something below hangs
+	watch &
+	modprobe brcmfmac >>$OUT 2>&1
+	for i in $(seq 1 100); do [ -e /sys/class/net/wlan0 ] && break; sleep 0.1; done
+	if [ -e /sys/class/net/wlan0 ]; then gen; up; else log "no wlan0 (brcmfmac did not load)"; fi
+	;;
+reload)
+	old=$(ssid)
+	gen
+	if running $WPA_PID; then kill -HUP "$(cat $WPA_PID)"; else up; fi
+	# wpa_supplicant re-associates after a reconfigure; then compare networks
+	sleep 3
+	for i in $(seq 1 20); do new=$(ssid); [ -n "$new" ] && break; sleep 1; done
+	if [ -n "$new" ] && [ "$new" != "$old" ] && running $DHCP_PID; then
+		log "moved from '$old' to '$new': new DHCP lease"
+		kill -USR2 "$(cat $DHCP_PID)"; sleep 1; kill -USR1 "$(cat $DHCP_PID)"
+	fi
+	;;
+net)
+	net
+	;;
+*)
+	echo "usage: $0 start|reload|net" >&2; exit 2
+	;;
+esac

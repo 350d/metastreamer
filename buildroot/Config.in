@@ -1,0 +1,1 @@
+source "$BR2_EXTERNAL_METASTREAMER_PATH/package/metastreamer/Config.in"

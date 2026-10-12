@@ -1,0 +1,9 @@
+#!/bin/sh
+# No real-time clock on the Pi: start from the image build time instead of 1970.
+# Later the goggles' clock (if newer) and then NTP over Wi-Fi correct it.
+case "$1" in
+start)
+	b=$(cat /etc/build-time 2>/dev/null)
+	[ -n "$b" ] && [ "$(date +%s)" -lt "$b" ] && date -u -s "@$b" >/dev/null
+	;;
+esac

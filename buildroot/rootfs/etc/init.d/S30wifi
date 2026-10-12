@@ -1,0 +1,8 @@
+#!/bin/sh
+# Wi-Fi in the background: the HDMI picture does not wait for the network.
+# Networks: wifi.txt on the SD card (see /usr/bin/metastreamer-wifi).
+case "$1" in
+start)
+	/usr/bin/metastreamer-wifi start </dev/null >/dev/null 2>&1 &
+	;;
+esac

@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>metastreamer</title>
+<style>
+:root{--bg:#0f1115;--card:#171a21;--line:#262b36;--text:#e6e9ef;--dim:#8a93a6;--acc:#3ea6ff;--ok:#3ecf8e;--bad:#ff5d5d;--warn:#f5b041}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 -apple-system,system-ui,sans-serif}
+[hidden]{display:none!important}
+svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+/* header in the style of the goggles' OSD */
+header{position:sticky;top:0;z-index:3;background:rgba(15,17,21,.95);padding:8px 16px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+header h1{font-size:15px;margin:0;font-weight:700}
+.osd{display:flex;align-items:center;gap:18px;flex-wrap:wrap;font:italic 800 16px/1 -apple-system,system-ui,sans-serif;font-variant-numeric:tabular-nums;color:#fff}
+.osd .it{display:flex;align-items:center;gap:6px}
+.osd svg.f{fill:currentColor;stroke:none}
+.osd .off{color:#4b5263}
+.osd .stack{display:flex;flex-direction:column;align-items:center;line-height:.95}
+.osd .stack small{font-size:9px;font-weight:700}
+.osd .bars{display:flex;align-items:flex-end;gap:2px;height:14px}
+.osd .bars i{display:block;width:3px;background:#4b5263}
+.osd .bars i.on{background:#fff}
+.osd .rec{color:var(--bad)}
+.grow{flex:1}
+.ib{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;min-width:34px;padding:0 8px;border-radius:6px;
+    background:#0d0f13;border:1px solid var(--line);color:var(--text);text-decoration:none;cursor:pointer;font:inherit}
+.ib:hover{border-color:var(--acc)}
+header .ib{border-color:transparent;background:transparent}header .ib:hover{color:var(--acc)}
+main{max-width:980px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr}
+@media(min-width:860px){main{grid-template-columns:1.1fr 1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h2,.drawer h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:0 0 12px}
+.frame{width:100%;aspect-ratio:16/9;background:#000;border-radius:6px;overflow:hidden}
+.frame video,.frame img{width:100%;height:100%;object-fit:contain;display:block}
+#snap.bad{visibility:hidden}
+.tools{display:flex;align-items:center;gap:8px;margin-top:10px}
+.meter{flex:1;height:8px;border-radius:4px;background:#0d0f13;border:1px solid var(--line);overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:var(--acc)}
+.meter.hi i{background:var(--warn)}.meter.full i{background:var(--bad)}
+.row{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row label{color:var(--dim)}
+.cur{color:var(--dim);font-size:12px;margin-left:6px;text-transform:none;letter-spacing:0}
+select,input,button{background:#0d0f13;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit}
+button{cursor:pointer}button:hover{border-color:var(--acc)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:transparent}
+.seg button.on{background:var(--acc);color:#001}
+.inline{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.dis{opacity:.45;pointer-events:none}
+/* settings drawer */
+.drawer{position:fixed;inset:0 0 0 auto;width:min(420px,100%);z-index:5;background:var(--card);border-left:1px solid var(--line);
+        padding:16px;overflow:auto;transform:translateX(100%);transition:transform .2s}
+.drawer.open{transform:none}
+.shade{position:fixed;inset:0;z-index:4;background:rgba(0,0,0,.5)}
+.drawer .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.drawer .top h2{margin:0}
+.drawer section{border-top:1px solid var(--line);padding:14px 0}
+.wrow{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin-bottom:8px}
+.wrow input{min-width:0}
+.row input{min-width:0;width:100%}
+#tz{min-width:0;max-width:100%}
+#toast{position:fixed;right:16px;bottom:16px;z-index:6;padding:10px 14px;border-radius:8px;background:var(--card);border:1px solid var(--line);opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.show{opacity:1}#toast.ok{border-color:var(--ok)}#toast.bad{border-color:var(--bad)}
+</style>
+</head>
+<body>
+<!-- Icons: Lucide (lucide.dev, ISC license). OSD glyphs (aircraft, goggles) drawn after the goggles' own. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
+  <symbol id="i-hls" viewBox="0 0 24 24"><path d="M12 12H3"/><path d="M16 6H3"/><path d="M12 18H3"/><path d="m16 12 5 3-5 3v-6Z"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></symbol>
+  <symbol id="i-braces" viewBox="0 0 24 24"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></symbol>
+  <symbol id="i-drive" viewBox="0 0 24 24"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></symbol>
+  <symbol id="i-sync" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="i-unplug" viewBox="0 0 24 24"><path d="m19 5 3-3"/><path d="m2 22 3-3"/><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/><path d="M7.5 13.5 10 11"/><path d="M10.5 16.5 13 14"/><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/></symbol>
+  <symbol id="o-air" viewBox="0 0 16 16"><path d="M8 1 15 15 8 11.6 1 15z"/></symbol>
+  <symbol id="o-goggles" viewBox="0 0 32 16"><path fill-rule="evenodd" d="M5 2h22a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4h-6.5L18 11.5h-4L11.5 14H5a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4zm1.5 3.5A1.5 1.5 0 0 0 5 7v2a1.5 1.5 0 0 0 1.5 1.5h6A1.5 1.5 0 0 0 14 9V7a1.5 1.5 0 0 0-1.5-1.5zm13 0A1.5 1.5 0 0 0 18 7v2a1.5 1.5 0 0 0 1.5 1.5h6A1.5 1.5 0 0 0 27 9V7a1.5 1.5 0 0 0-1.5-1.5z"/></symbol>
+</svg>
+
+<header>
+  <h1>metastreamer</h1>
+  <div class="osd">
+    <span class="it" id="h-nolink" title="No link to the goggles"><svg class="i" style="color:var(--bad)"><use href="#i-unplug"/></svg></span>
+    <span class="it off" id="h-air" title="Air unit"><svg class="i f" viewBox="0 0 16 16" style="width:15px;height:15px"><use href="#o-air"/></svg></span>
+    <span class="it" title="Video link quality"><span class="stack"><small>HD</small></span><span class="bars" id="h-bars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:14px"></i></span></span>
+    <span class="it" title="Video bitrate"><span class="stack"><span id="h-br">—</span><small>Mbps</small></span></span>
+    <span class="it" id="h-gog" title="Goggles battery"><svg class="i f" viewBox="0 0 32 16" style="width:28px;height:14px"><use href="#o-goggles"/></svg><span id="h-gbat">—</span></span>
+    <span class="it rec" id="h-rec" hidden title="Air unit is recording"><span>●</span><span id="h-rect"></span></span>
+  </div>
+  <span class="grow"></span>
+  <button class="ib" id="b-settings" title="Settings"><svg class="i"><use href="#i-settings"/></svg></button>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Preview</h2>
+    <div class="frame"><video id="vid" autoplay muted playsinline></video><img id="snap" alt="" hidden></div>
+    <div class="tools">
+      <button class="ib" id="b-full" title="Full screen"><svg class="i"><use href="#i-maximize"/></svg></button>
+      <a class="ib" href="/stream.m3u8" target="_blank" title="HLS stream (stream.m3u8)"><svg class="i"><use href="#i-hls"/></svg></a>
+      <a class="ib" href="/snapshot" target="_blank" title="Snapshot (JPEG)"><svg class="i"><use href="#i-camera"/></svg></a>
+      <a class="ib" href="/status" target="_blank" title="Status (JSON)"><svg class="i"><use href="#i-activity"/></svg></a>
+      <a class="ib" href="/duml" target="_blank" title="DUML messages (JSON)"><svg class="i"><use href="#i-braces"/></svg></a>
+      <span style="width:8px"></span>
+      <svg class="i" style="color:var(--dim)" aria-label="Air unit storage"><use href="#i-drive"/></svg>
+      <div class="meter" id="storage" title="Air unit storage"><i></i></div>
+    </div>
+  </section>
+
+  <section class="card" id="cam">
+    <h2>Air unit camera <span class="cur" id="cam-state"></span></h2>
+    <div class="row"><label>Format</label><div class="inline">
+      <select id="res"><option>1080p</option><option>2.7K</option><option>4K</option></select>
+      <select id="ar"><option>16:9</option><option>4:3</option></select>
+      <select id="fps"><option>30</option><option>48</option><option>50</option><option>60</option><option>100</option><option>120</option></select>
+      </div></div>
+    <div class="row"><label>Exposure</label><div class="inline"><span class="seg" id="exposure">
+      <button data-v="auto">Auto</button><button data-v="manual">Manual</button></span></div></div>
+    <div class="row man"><label>ISO</label><div class="inline"><select data-k="iso">
+      <option value="0">Auto</option><option>100</option><option>200</option><option>400</option><option>800</option>
+      <option>1600</option><option>3200</option><option>6400</option><option>12800</option><option>25600</option></select></div></div>
+    <div class="row man"><label>Shutter</label><div class="inline"><select data-k="shutter" id="shutter"></select></div></div>
+    <div class="row"><label>EV</label><div class="inline"><select data-k="ev" id="ev"></select></div></div>
+    <div class="row"><label>White balance</label><div class="inline"><select data-k="wb" id="wb"></select></div></div>
+    <div class="row"><label>Sharpness</label><div class="inline"><select data-k="sharpness">
+      <option>-3</option><option>-2</option><option>-1</option><option>0</option><option>1</option><option>2</option><option>3</option></select></div></div>
+    <div class="row"><label>Noise reduction</label><div class="inline"><select data-k="nr">
+      <option>-2</option><option>-1</option><option>0</option><option>1</option></select></div></div>
+    <div class="row"><label>Color</label><div class="inline"><select data-k="color">
+      <option value="normal">Normal</option><option value="dcinelike">D-Cinelike</option><option value="dlog">D-Log (O4 Pro)</option></select></div></div>
+    <div class="row"><label>Anti-flicker</label><div class="inline"><select data-k="flicker">
+      <option value="auto">Auto</option><option value="50hz">50 Hz</option><option value="60hz">60 Hz</option><option value="off">Off</option></select></div></div>
+  </section>
+</main>
+
+<div class="shade" id="shade" hidden></div>
+<aside class="drawer" id="drawer" aria-label="Settings">
+  <div class="top"><h2>Settings</h2><button class="ib" id="b-close" title="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <section id="wifi">
+    <h2>Wi-Fi <span class="cur" id="w-note"></span></h2>
+    <div id="w-list"></div>
+    <div class="inline">
+      <button class="ib" id="w-add" title="Add network"><svg class="i"><use href="#i-plus"/></svg></button>
+      <button class="ib" id="w-save" title="Save"><svg class="i"><use href="#i-save"/></svg>Save</button>
+    </div>
+  </section>
+  <section id="net">
+    <h2>Network</h2>
+    <div class="row"><label>Address</label><div class="inline"><span class="seg" id="n-mode">
+      <button data-v="dhcp">DHCP</button><button data-v="static">Static</button></span></div></div>
+    <div class="row st"><label>IP</label><input id="n-addr" placeholder="192.168.1.50" autocomplete="off"></div>
+    <div class="row st"><label>Gateway</label><input id="n-gw" placeholder="192.168.1.1" autocomplete="off"></div>
+    <div class="row st"><label>DNS</label><input id="n-dns" placeholder="same as gateway" autocomplete="off"></div>
+    <div class="inline"><button class="ib" id="n-save" title="Save"><svg class="i"><use href="#i-save"/></svg>Save</button></div>
+  </section>
+  <section id="time">
+    <h2>Time</h2>
+    <div class="row"><label>Time zone</label><div class="inline">
+      <label class="inline"><input type="checkbox" id="tz-auto"> auto</label><select id="tz"></select></div></div>
+    <div class="row"><label>Goggles clock</label><div class="inline">
+      <span id="t-gclock">—</span>
+      <button class="ib" id="t-sync" title="Set the goggles' clock now"><svg class="i"><use href="#i-sync"/></svg></button></div></div>
+  </section>
+</aside>
+<div id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+let tt;
+function toast(msg,ok){const t=$('toast');t.textContent=msg;t.className='show '+(ok?'ok':'bad');clearTimeout(tt);tt=setTimeout(()=>t.className='',2200);}
+async function post(url,data){return (await fetch(url,{method:'POST',body:new URLSearchParams(data)})).json();}
+
+/* ---- camera ---- */
+const sh=$('shutter'); sh.add(new Option('Auto','0'));
+[30,40,50,60,80,100,120,160,200,240,250,320,400,500,640,800,1000,1250,1600,2000,2500,3200,4000,5000,6400,8000].forEach(v=>sh.add(new Option('1/'+v,v)));
+const ev=$('ev'); [-3,-2.7,-2.3,-2,-1.7,-1.3,-1,-0.7,-0.3,0,0.3,0.7,1,1.3,1.7,2,2.3,2.7,3].forEach(v=>ev.add(new Option((v>0?'+':'')+v.toFixed(1),v.toFixed(1))));
+const wb=$('wb'); wb.add(new Option('Auto','auto')); for(let t=2000;t<=10000;t+=500) wb.add(new Option(t+' K',t));
+async function set(k,v){
+  try{const r=await (await fetch('api/set?'+encodeURIComponent(k)+'='+encodeURIComponent(v))).json();
+      toast(r.ok?(k+' = '+v):('error: '+r.error),r.ok);}catch(e){toast('no response',false);}
+}
+document.querySelectorAll('select[data-k]').forEach(s=>s.addEventListener('change',()=>set(s.dataset.k,s.value)));
+document.querySelectorAll('#exposure button').forEach(b=>b.addEventListener('click',()=>set('exposure',b.dataset.v)));
+['res','ar','fps'].forEach(id=>$(id).addEventListener('change',()=>{if($('fps').value)set('format',$('res').value+','+$('ar').value+','+$('fps').value);}));
+function setSel(id,val){const el=typeof id==='string'?document.querySelector(id):id;if(!el||document.activeElement===el||val==null)return;el.value=String(val);}
+
+/* ---- preview: low-latency fMP4 over MSE, else native HLS, else a snapshot every 2 s ---- */
+const vid=$('vid'),img=$('snap');let vmode='';
+img.addEventListener('load',()=>img.classList.remove('bad'));
+img.addEventListener('error',()=>img.classList.add('bad'));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function snapshots(){vmode='snap';vid.hidden=true;img.hidden=false;const f=()=>{img.src='snapshot?t='+Date.now();};f();setInterval(f,2000);}
+function hls(){vmode='hls';vid.src='stream.m3u8?t='+Date.now();vid.play().catch(()=>{});}
+vid.addEventListener('error',()=>{if(vmode==='hls')setTimeout(hls,2000);});
+async function live(){
+  const info=await (await fetch('info.json',{cache:'no-store'})).json();
+  if(!info.ready)throw new Error('no stream');
+  const MS=window.ManagedMediaSource||window.MediaSource,mime='video/mp4; codecs="'+info.codec+'"';
+  if(!MS||!MS.isTypeSupported(mime))throw new Error('no MSE');
+  const ms=new MS();if(window.ManagedMediaSource)vid.disableRemotePlayback=true;
+  vid.src=URL.createObjectURL(ms);await new Promise(r=>ms.addEventListener('sourceopen',r,{once:true}));
+  const sb=ms.addSourceBuffer(mime),q=[];vmode='live';
+  const pump=()=>{if(sb.updating||!q.length||ms.readyState!=='open')return;
+    const t=vid.currentTime;if(sb.buffered.length&&t-sb.buffered.start(0)>10){sb.remove(0,t-4);return;}
+    let n=0;for(const c of q)n+=c.length;const b=new Uint8Array(n);let o=0;for(const c of q){b.set(c,o);o+=c.length;}q.length=0;
+    try{sb.appendBuffer(b);}catch(e){}};
+  sb.addEventListener('updateend',pump);
+  const r=(await fetch('live.mp4',{cache:'no-store'})).body.getReader();vid.play().catch(()=>{});
+  for(;;){const {done,value}=await r.read();if(done)break;q.push(value);pump();}
+  throw new Error('stream ended');
+}
+(async()=>{for(;;){try{await live();}catch(e){if(e.message==='no MSE'){
+  if(vid.canPlayType('application/vnd.apple.mpegurl'))hls();else snapshots();return;}}await sleep(1000);}})();
+setInterval(()=>{if(vid.hidden||!vid.buffered.length)return;const e=vid.buffered.end(vid.buffered.length-1),lag=e-vid.currentTime;
+  if(vmode==='live'){if(lag>0.3||vid.currentTime<vid.buffered.start(0))vid.currentTime=e-0.04;vid.playbackRate=lag>0.07?1.2:1.0;}
+  else if(lag>1.2)vid.currentTime=e-0.3;
+  if(vid.paused)vid.play().catch(()=>{});},200);
+
+$('b-full').addEventListener('click',()=>{const el=vid.hidden?img:vid;
+  if(el.requestFullscreen)el.requestFullscreen().catch(()=>{});
+  else if(el.webkitEnterFullscreen)el.webkitEnterFullscreen();   /* iPhone: video only */
+  else if(el.webkitRequestFullscreen)el.webkitRequestFullscreen();});
+
+/* ---- settings drawer ---- */
+function drawer(open){$('drawer').classList.toggle('open',open);$('shade').hidden=!open;if(open){wload();nload();tload();}}
+$('b-settings').addEventListener('click',()=>drawer(true));
+$('b-close').addEventListener('click',()=>drawer(false));
+$('shade').addEventListener('click',()=>drawer(false));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')drawer(false);});
+
+/* Wi-Fi: names and passwords; an empty password field keeps the saved one */
+function wrow(ssid,saved){
+  const d=document.createElement('div');d.className='wrow';
+  d.innerHTML='<input class="w-ssid" maxlength="32" placeholder="network name" autocomplete="off"><input class="w-pass" type="password" autocomplete="new-password"><button class="ib" title="Remove"><svg class="i"><use href="#i-x"/></svg></button>';
+  const p=d.querySelector('.w-pass');d.querySelector('.w-ssid').value=ssid||'';
+  if(saved){d.dataset.orig=ssid;p.placeholder='saved password';}else p.placeholder=ssid?'open network':'password';
+  d.querySelector('button').addEventListener('click',()=>d.remove());
+  $('w-list').appendChild(d);return d;
+}
+async function wload(){
+  try{const j=await (await fetch('api/wifi')).json();$('w-list').innerHTML='';
+    $('wifi').classList.toggle('dis',!j.available);$('w-note').textContent=j.available?'':'(not available on this system)';
+    j.networks.forEach(n=>wrow(n.ssid,n.saved_password));if(!j.networks.length)wrow('',false);
+  }catch(e){}
+}
+$('w-add').addEventListener('click',()=>wrow('',false).querySelector('.w-ssid').focus());
+$('w-save').addEventListener('click',async()=>{
+  const f=new URLSearchParams();
+  document.querySelectorAll('#w-list .wrow').forEach(r=>{const s=r.querySelector('.w-ssid').value.trim();if(!s)return;
+    f.append('n',s);f.append('p',r.querySelector('.w-pass').value);if(r.dataset.orig)f.append('o',r.dataset.orig);});
+  try{const j=await (await fetch('api/wifi',{method:'POST',body:f})).json();
+    toast(j.ok?'Wi-Fi saved, applying…':'error: '+j.error,j.ok);if(j.ok)wload();
+  }catch(e){toast('no response',false);}
+});
+
+/* Network: DHCP, or a static address (no waiting for DHCP at boot) */
+let nmode='dhcp',npfx='24';   /* the mask is not shown: the one DHCP gave, else /24 */
+function nshow(m){nmode=m;document.querySelectorAll('#n-mode button').forEach(b=>b.classList.toggle('on',b.dataset.v===m));
+  document.querySelectorAll('#net .st').forEach(x=>x.hidden=m!=='static');}
+document.querySelectorAll('#n-mode button').forEach(b=>b.addEventListener('click',()=>nshow(b.dataset.v)));
+async function nload(){
+  try{const j=await (await fetch('api/net')).json(),c=j.current||{};
+    const [ip,pfx]=(j.address||c.address||'').split('/');$('n-addr').value=ip||'';npfx=pfx||'24';$('n-gw').value=j.gateway||c.gateway||'';$('n-dns').value=j.dns||c.dns||'';
+    nshow(j.mode);}catch(e){}
+}
+$('n-save').addEventListener('click',async()=>{
+  const ip=$('n-addr').value.trim(),a=ip+'/'+npfx;
+  try{const j=await post('api/net',{mode:nmode,address:a,gateway:$('n-gw').value.trim(),dns:$('n-dns').value.trim()});
+    if(!j.ok){toast('error: '+j.error,false);return;}
+    if(nmode==='static'&&ip!==location.hostname){toast('saved, moving to '+ip+'…',true);setTimeout(()=>location.href='http://'+ip+'/settings',5000);}
+    else toast(nmode==='static'?'static address saved':'DHCP: find metastreamer in your router if the address changes',true);
+  }catch(e){toast('no response',false);}
+});
+
+/* Time: the bridge sets the goggles' clock to local time in this zone */
+const browserTz=Intl.DateTimeFormat().resolvedOptions().timeZone;
+const zones=Intl.supportedValuesOf?Intl.supportedValuesOf('timeZone'):[browserTz];
+zones.forEach(z=>$('tz').add(new Option(z.replace(/_/g,' '),z)));
+async function tset(tz,auto,quiet){
+  try{const j=await post('api/time',{tz,auto:auto?1:0});
+    if(!quiet)toast(j.ok?'time zone: '+j.timezone:'error: '+j.error,j.ok);}catch(e){if(!quiet)toast('no response',false);}
+}
+async function tload(){
+  try{const j=await (await fetch('api/time')).json(),auto=j.auto!==false;
+    $('tz-auto').checked=auto;$('tz').disabled=auto;
+    const z=j.timezone||browserTz;if(![...$('tz').options].some(o=>o.value===z))$('tz').add(new Option(z,z));$('tz').value=z;
+    if(auto&&browserTz&&j.timezone!==browserTz){$('tz').value=browserTz;await tset(browserTz,true,true);}
+  }catch(e){}
+}
+$('tz-auto').addEventListener('change',()=>{const a=$('tz-auto').checked;$('tz').disabled=a;
+  if(a)$('tz').value=browserTz;tset(a?browserTz:$('tz').value,a,false);});
+$('tz').addEventListener('change',()=>tset($('tz').value,false,false));
+$('t-sync').addEventListener('click',async()=>{
+  try{const j=await post('api/time/sync',{});toast(j.ok?'setting the goggles clock…':'error: '+j.error,j.ok);}catch(e){toast('no response',false);}
+});
+tload();   /* auto mode follows this browser's time zone */
+
+/* ---- live status (OSD header, storage, camera, goggles clock) ---- */
+const NAMES={ZV900:'Goggles 2',ZV901:'Goggles Integra',ZV902:'Goggles 3',ZV300:'Goggles N3',
+             WM1695:'O3 Air Unit',ZA530:'O4 Air Unit',ZA5305:'O4 Air Unit Pro'};
+const name=c=>NAMES[c]?NAMES[c]+' ('+c+')':c;
+function fmtSecs(s){const m=Math.floor(s/60);return m+':'+String(s%60).padStart(2,'0');}
+const es=new EventSource('events');
+es.onmessage=e=>{
+  let j;try{j=JSON.parse(e.data);}catch(x){return;}
+  const t=j.telemetry||{},v=j.video||{},u=j.usb||{},devs=t.devices||[];
+  $('h-nolink').hidden=!!u.registered;
+  const air=devs.find(d=>/^(WM|ZA|LT|WA)/.test(d.code)),gog=devs.find(d=>/^ZV/.test(d.code));
+  $('h-air').classList.toggle('off',!air);$('h-air').title=air?name(air.code):'No air unit';
+  $('h-gog').title='Goggles battery'+(gog?' · '+name(gog.code):'');
+  const lq=t.link_quality,n=lq==null?0:lq>=80?4:lq>=55?3:lq>=30?2:lq>0?1:0;
+  [...$('h-bars').children].forEach((b,i)=>b.classList.toggle('on',i<n));
+  $('h-bars').parentElement.title='Video link quality'+(lq!=null?': '+lq+'%':'');
+  $('h-br').textContent=v.kbps?(v.kbps/1000).toFixed(1):'0';
+  $('h-gbat').textContent=t.goggles_battery!=null?t.goggles_battery+'%':'—';
+  const r=t.air_recorder;$('h-rec').hidden=!(r&&r.recording);if(r&&r.recording)$('h-rect').textContent=fmtSecs(r.record_secs);
+  const m=$('storage');
+  if(r&&r.total_mb){const used=1-r.free_mb/r.total_mb;m.firstElementChild.style.width=(used*100).toFixed(1)+'%';
+    m.classList.toggle('hi',used>.8);m.classList.toggle('full',used>.95);
+    m.title='Air unit storage: '+(r.free_mb/1024).toFixed(1)+' of '+(r.total_mb/1024).toFixed(1)+' GB free';}
+  $('t-gclock').textContent=u.goggles_clock?u.goggles_clock.replace('T',' '):'—';
+  const c=t.camera; $('cam').classList.toggle('dis',!c);
+  $('cam-state').textContent=c?'':'(no data from camera)';
+  if(!c)return;
+  if(c.res){setSel('#res',c.res);setSel('#ar',c.ar);setSel('#fps',c.fps);}
+  if(c.exposure){document.querySelectorAll('#exposure button').forEach(b=>b.classList.toggle('on',b.dataset.v===c.exposure));
+    document.querySelectorAll('.man').forEach(x=>x.classList.toggle('dis',c.exposure==='auto'));}
+  if(c.iso!=null){setSel('select[data-k=iso]',c.iso);}
+  if(c.shutter!=null){setSel(sh,c.shutter);}
+  if(c.ev!=null){setSel(ev,c.ev.toFixed(1));}
+  if(c.wb){setSel(wb,c.wb==='auto'?'auto':c.wb_temp);}
+  if(c.sharpness!=null)setSel('select[data-k=sharpness]',c.sharpness);
+  if(c.noise_reduction!=null)setSel('select[data-k=nr]',c.noise_reduction);
+  if(c.color)setSel('select[data-k=color]',c.color);
+  if(c.flicker)setSel('select[data-k=flicker]',c.flicker);
+};
+</script>
+</body>
+</html>

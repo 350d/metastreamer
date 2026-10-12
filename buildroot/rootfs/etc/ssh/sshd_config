@@ -1,0 +1,9 @@
+# baked into the image, or made on the first boot (S50sshd)
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /run/ssh_host_ed25519_key
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+# keys baked into the image, or an authorized_keys file on the SD card
+AuthorizedKeysFile .ssh/authorized_keys /boot/authorized_keys
+Subsystem sftp /usr/libexec/sftp-server

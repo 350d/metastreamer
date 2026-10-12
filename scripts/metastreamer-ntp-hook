@@ -1,0 +1,6 @@
+#!/bin/sh
+# busybox ntpd -S hook ($1 = step | stratum | periodic | unsync).
+# /run/time-synced tells metastreamer that the system clock is right, so it may set the goggles' clock.
+case "$1" in
+step|stratum|periodic) [ -e /run/time-synced ] || { touch /run/time-synced; logger -t ntp "clock synced"; } ;;
+esac

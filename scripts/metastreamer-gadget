@@ -1,0 +1,39 @@
+#!/bin/sh
+# Bring up a USB gadget "phone" (Android Open Accessory) on a Raspberry Pi Zero
+# so that DJI Goggles 2/3/N3 start sending video. Creates /dev/ttyGS0.
+# Descriptor taken from YStreamer (gadget.rs). POSIX sh: the Buildroot image has no bash. Run as root.
+set -e
+[ "$(id -u)" = 0 ] || { echo "root required: sudo $0"; exit 1; }
+
+# 1) dwc2 in peripheral mode (one-time; reboot required if it was changed)
+BOOT=/boot/firmware/config.txt; [ -f "$BOOT" ] || BOOT=/boot/config.txt
+grep -q '^dtoverlay=dwc2,dr_mode=peripheral' "$BOOT" || {
+  echo "WARNING: add this line to $BOOT: dtoverlay=dwc2,dr_mode=peripheral  and reboot"; }
+# make sure it is NOT in host mode
+grep -q '^otg_mode=1' "$BOOT" && echo "WARNING: remove otg_mode=1 from $BOOT (it keeps the port in host mode)"
+
+modprobe libcomposite
+# on early boot the USB controller may not appear immediately
+for i in $(seq 1 50); do [ -n "$(ls /sys/class/udc 2>/dev/null)" ] && break; sleep 0.2; done
+G=/sys/kernel/config/usb_gadget/metastreamer
+[ -d "$G" ] && { echo "gadget already exists"; ls /dev/ttyGS0 2>/dev/null && exit 0; }
+mkdir -p "$G"; cd "$G"
+echo 0x18d1 > idVendor      # Google — Android Open Accessory
+echo 0x2d00 > idProduct     # AOA accessory
+echo 0x0100 > bcdDevice
+echo 0x0200 > bcdUSB
+echo 0xFF   > bDeviceClass
+echo 0xFF   > bDeviceSubClass
+echo 0x00   > bDeviceProtocol
+mkdir -p strings/0x409
+echo 0123456789ABCDEF > strings/0x409/serialnumber
+echo metastreamer           > strings/0x409/manufacturer
+echo "metastreamer" > strings/0x409/product
+mkdir -p configs/c.1/strings/0x409
+echo "Config 1: AOA" > configs/c.1/strings/0x409/configuration
+echo 250 > configs/c.1/MaxPower
+mkdir -p functions/gser.usb0          # generic serial -> /dev/ttyGS0
+ln -sf functions/gser.usb0 configs/c.1/
+ls /sys/class/udc | head -1 > UDC      # bind
+for i in $(seq 1 20); do [ -e /dev/ttyGS0 ] && break; sleep 0.1; done
+ls -l /dev/ttyGS0 && echo "gadget is up"
