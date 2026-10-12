@@ -14,7 +14,7 @@ a web page. The whole system is a 90 MB read-only image that shows a picture abo
   as JSON, server-sent events and HLS metadata
 - **Camera settings**: resolution, frame rate, exposure, ISO, shutter, EV, white balance, sharpness,
   noise reduction, colour profile, anti-flicker
-- **Wi-Fi**: networks from a text file on the SD card or the web page, DHCP or a static address
+- **Wi-Fi**: networks from one settings file on the SD card or the web page, DHCP or a static address
 - **Clock**: NTP over Wi-Fi, local time zone, and it sets the goggles' clock for correct recording dates
 - **Appliance-style system**: Buildroot, read-only root, hardware watchdog, survives HDMI hot-plug
 
@@ -77,11 +77,14 @@ it fast. The binary is about 190 KB, and the whole system uses about 90 MB of th
 
 1. Write [`images/metastreamer-rpi0w.img.xz`](images/) to the card with Raspberry Pi Imager or balenaEtcher
    (both take the `.xz` as it is), or build your own (see [Building](#building)).
-2. Open the card's boot partition (`METASTREAM`) on your computer and add your Wi-Fi to `wifi.txt`:
+2. Open the card's boot partition (`METASTREAM`) on your computer and fill in `metastreamer.txt`:
+   your country code, and your Wi-Fi under `[wifi]`, one network per line:
 
    ```
-   country = EE
-   My home Wi-Fi = my password
+   country="EE"
+   ...
+   [wifi]
+   "My home Wi-Fi"="my password"
    ```
 
 3. Put the card in the Pi, connect HDMI and the goggles, power on the goggles and the air unit.
@@ -105,13 +108,12 @@ The boot partition (FAT, `METASTREAM`) holds everything you may want to change; 
 
 | File | What it is |
 |---|---|
-| `wifi.txt` | Wi-Fi networks, one per line: `name = password`; first line has the highest priority; `country = XX` |
-| `metastreamer.txt` | Time zone and network: `timezone`, `timezone_auto`, `network = dhcp \| static`, `address`, `gateway`, `dns` |
+| `metastreamer.txt` | All settings, `key="value"`: `country`, `timezone`, `timezone_auto`, `network` (`"dhcp"` or `"static"`), `address`, `gateway`, `dns`; then the Wi-Fi networks under `[wifi]`, one `"name"="password"` per line, the first one preferred |
 | `authorized_keys` | Optional: SSH public keys for `root` (there is no password login) |
 | `ssh_host_ed25519_key`, `.pub` | Made on the first boot: the Pi's SSH identity, kept across reboots |
 | `wifi.log` | Written by the Pi: the address it got, or a report when Wi-Fi did not come up (no passwords in it) |
 
-A wrong static address makes the Pi unreachable over Wi-Fi: set `network = dhcp` in `metastreamer.txt` to undo it.
+A wrong static address makes the Pi unreachable over Wi-Fi: set `network="dhcp"` in `metastreamer.txt` to undo it.
 
 ## HTTP endpoints
 

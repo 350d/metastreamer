@@ -1,9 +1,7 @@
-/* wifi.c — Wi-Fi networks kept in wifi.txt on the SD card boot partition.
- *
- * wifi.txt is plain text: "country = XX" and one network per line, "name = password".
- * It is the only place networks are stored and nothing ever deletes it. At boot metastreamer-wifi turns it
- * into /run/wpa_supplicant.conf through "metastreamer --wifi-conf"; /settings rewrites it and runs
- * "metastreamer-wifi reload". Passwords never leave the device through the API.
+/* wifi.c — Wi-Fi: the networks from the [wifi] section of metastreamer.txt (kept by conf.c),
+ * the wpa_supplicant config made from them at boot ("metastreamer --wifi-conf"), and the /api/wifi and
+ * /api/net pages. /settings saves through conf.c and runs "metastreamer-wifi reload".
+ * Passwords never leave the device through the API.
  */
 #include "wifi.h"
 #include "conf.h"
@@ -20,21 +18,7 @@
 #include <strings.h>
 #include <unistd.h>
 
-#define WIFI_TXT  "/boot/wifi.txt"
-#define WIFI_TMP  "/boot/wifi.tmp"
 #define WIFI_TOOL "/usr/bin/metastreamer-wifi"
-#define MAX_NET   16
-
-typedef struct { char ssid[33], psk[65]; } Net;
-typedef struct { char country[3]; int n; Net net[MAX_NET]; } Cfg;
-
-static const char HEADER[] =
-    "# Wi-Fi networks for the metastreamer. One network per line:   name = password\n"
-    "# The first line has the highest priority. An open network has nothing after \"=\".\n"
-    "# Spaces around the name and the password are ignored; a name cannot contain \"=\".\n"
-    "# Whole-line comments start with #. The Pi Zero W only sees 2.4 GHz networks.\n"
-    "# country: two-letter code of your country (correct channels and power limits).\n"
-    "# This file is also edited from http://<bridge>/settings, which rewrites it in this format.\n\n";
 
 static char *trim(char *s) {
     while (*s == ' ' || *s == '\t') s++;
@@ -49,81 +33,35 @@ static int is_hex64(const char *s) {
     return 1;
 }
 
-static int is_country(const char *s) {
-    return strlen(s) == 2 && isalpha((unsigned char)s[0]) && isalpha((unsigned char)s[1]);
-}
-
-/* NULL = ok, else what is wrong */
-static const char *check_net(const char *ssid, const char *psk) {
-    size_t ls = strlen(ssid), lp = strlen(psk);
-    if (ls == 0 || ls > 32) return "network name must be 1..32 bytes";
-    if (lp && (lp < 8 || lp > 63) && !is_hex64(psk)) return "password must be 8..63 characters";
-    return NULL;
-}
-
-static int load(const char *path, Cfg *c) {
-    memset(c, 0, sizeof(*c));
-    FILE *f = fopen(path, "r");
-    if (!f) return -1;
-    char line[512];
-    for (int ln = 1; fgets(line, sizeof(line), f); ln++) {
-        char *s = line;
-        if (ln == 1 && !memcmp(s, "\xEF\xBB\xBF", 3)) s += 3;   /* UTF-8 BOM from Windows editors */
-        s = trim(s);
-        if (!*s || *s == '#') continue;
-        char *eq = strchr(s, '=');
-        if (!eq) { fprintf(stderr, "[wifi] %s:%d: no '=', line ignored\n", path, ln); continue; }
-        *eq = 0;
-        char *k = trim(s), *v = trim(eq + 1);
-        if (!strcasecmp(k, "country")) {
-            if (is_country(v)) { c->country[0] = (char)toupper((unsigned char)v[0]); c->country[1] = (char)toupper((unsigned char)v[1]); }
-            else if (*v) fprintf(stderr, "[wifi] %s:%d: country must be a two-letter code\n", path, ln);
-            continue;
-        }
-        const char *e = check_net(k, v);
-        if (e) { fprintf(stderr, "[wifi] %s:%d: %s, line ignored\n", path, ln, e); continue; }
-        if (c->n == MAX_NET) { fprintf(stderr, "[wifi] more than %d networks, the rest is ignored\n", MAX_NET); break; }
-        snprintf(c->net[c->n].ssid, sizeof(c->net[0].ssid), "%s", k);
-        snprintf(c->net[c->n].psk, sizeof(c->net[0].psk), "%s", v);
-        c->n++;
-    }
-    fclose(f);
-    return 0;
-}
-
-static int write_file(const char *tmp, const char *path, const char *data, size_t n) {
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-    if (fd < 0) return -1;
-    int ok = write(fd, data, n) == (ssize_t)n && fsync(fd) == 0;
-    close(fd);
-    if (!ok || rename(tmp, path) != 0) { unlink(tmp); return -1; }
-    return 0;
-}
-
 int wifi_gen_conf(const char *txt, const char *conf) {
-    Cfg c;
-    if (load(txt, &c) < 0) fprintf(stderr, "[wifi] no %s: no networks\n", txt);
+    if (conf_read(txt) < 0) fprintf(stderr, "[wifi] no %s: no networks\n", txt);
+    int n = conf_wifi_count();
+    const char *country = conf_country();
     static char out[8192];
     size_t o = 0;
 #define OUT(...) do { if (o < sizeof(out)) o += snprintf(out + o, sizeof(out) - o, __VA_ARGS__); } while (0)
     /* no ctrl_interface: this wpa_supplicant is built without it and rejects the whole file; reload = SIGHUP */
     OUT("# generated from %s by metastreamer --wifi-conf, edit that file instead\n", txt);
-    if (c.country[0]) OUT("country=%s\n", c.country);
-    for (int i = 0; i < c.n; i++) {
+    if (country[0]) OUT("country=%s\n", country);
+    for (int i = 0; i < n; i++) {
+        const ConfNet *w = conf_wifi(i);
         OUT("network={\n\tssid=");   /* hex: any bytes in the name are safe */
-        for (const unsigned char *p = (const unsigned char *)c.net[i].ssid; *p; p++) OUT("%02x", *p);
-        OUT("\n\tscan_ssid=1\n\tpriority=%d\n", c.n - i);
-        if (!c.net[i].psk[0]) OUT("\tkey_mgmt=NONE\n");
-        else if (is_hex64(c.net[i].psk)) OUT("\tpsk=%s\n", c.net[i].psk);
-        else OUT("\tpsk=\"%s\"\n", c.net[i].psk);   /* wpa_supplicant takes everything up to the last quote */
+        for (const unsigned char *p = (const unsigned char *)w->ssid; *p; p++) OUT("%02x", *p);
+        OUT("\n\tscan_ssid=1\n\tpriority=%d\n", n - i);
+        if (!w->psk[0]) OUT("\tkey_mgmt=NONE\n");
+        else if (is_hex64(w->psk)) OUT("\tpsk=%s\n", w->psk);
+        else OUT("\tpsk=\"%s\"\n", w->psk);   /* wpa_supplicant takes everything up to the last quote */
         OUT("}\n");
     }
 #undef OUT
     if (o >= sizeof(out)) { fprintf(stderr, "[wifi] config too large\n"); return 1; }
     char tmp[256];
     snprintf(tmp, sizeof(tmp), "%s.tmp", conf);
-    if (write_file(tmp, conf, out, o) != 0) { perror(conf); return 1; }
-    printf("[wifi] %s: %d network(s)%s%s\n", conf, c.n, c.country[0] ? ", country " : "", c.country);
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    int ok = fd >= 0 && write(fd, out, o) == (ssize_t)o;
+    if (fd >= 0) close(fd);
+    if (!ok || rename(tmp, conf) != 0) { perror(conf); unlink(tmp); return 1; }
+    printf("[wifi] %s: %d network(s)%s%s\n", conf, n, country[0] ? ", country " : "", country);
     return 0;
 }
 
@@ -179,17 +117,15 @@ static void wlan_ip(char *ip, size_t n) {
 size_t wifi_json(char *out, size_t cap) {
     J j = {out, cap, 0};
     out[0] = 0;
-    Cfg c;
-    int have = load(WIFI_TXT, &c) == 0;
     jp(&j, "{\"available\":%s,\"file\":%s,\"wlan\":%s,\"country\":",
-       access(WIFI_TOOL, X_OK) == 0 ? "true" : "false", have ? "true" : "false",
+       access(WIFI_TOOL, X_OK) == 0 ? "true" : "false", access(CONF_TXT, F_OK) == 0 ? "true" : "false",
        access("/sys/class/net/wlan0", F_OK) == 0 ? "true" : "false");
-    js(&j, c.country);
+    js(&j, conf_country());
     jp(&j, ",\"networks\":[");
-    for (int i = 0; i < c.n; i++) {
+    for (int i = 0; i < conf_wifi_count(); i++) {
         jp(&j, "%s{\"ssid\":", i ? "," : "");
-        js(&j, c.net[i].ssid);
-        jp(&j, ",\"saved_password\":%s}", c.net[i].psk[0] ? "true" : "false");
+        js(&j, conf_wifi(i)->ssid);
+        jp(&j, ",\"saved_password\":%s}", conf_wifi(i)->psk[0] ? "true" : "false");
     }
     char ssid[160], ip[INET_ADDRSTRLEN];
     int sig;
@@ -219,14 +155,12 @@ static int has_ctrl(const char *s) {
     return 0;
 }
 
+/* form: per network n (name), p (password), o (saved network whose password to keep when p is empty) */
 const char *wifi_save(const char *body) {
     static char err[160];
+    static ConfNet nw[CONF_MAX_NET];
     if (access(WIFI_TOOL, X_OK) != 0) return "Wi-Fi control is not available on this system";
-    Cfg old, nw;
-    load(WIFI_TXT, &old);
-    memset(&nw, 0, sizeof(nw));
-    memcpy(nw.country, old.country, sizeof(nw.country));   /* kept unless the form sends one */
-    int cur = -1;
+    int n = 0, cur = -1;
     for (const char *p = body; *p;) {
         const char *amp = strchr(p, '&');
         size_t len = amp ? (size_t)(amp - p) : strlen(p);
@@ -240,52 +174,29 @@ const char *wifi_save(const char *body) {
         char *k = kv, *v = eq + 1;
         form_decode(k); form_decode(v);
         if (has_ctrl(v)) return "control characters are not allowed";
-        if (!strcmp(k, "country")) {
-            v = trim(v);
-            if (*v && !is_country(v)) return "country must be a two-letter code";
-            nw.country[0] = (char)toupper((unsigned char)v[0]);
-            nw.country[1] = *v ? (char)toupper((unsigned char)v[1]) : 0;
-        } else if (!strcmp(k, "n")) {
-            v = trim(v);
+        if (!strcmp(k, "n")) {
             if (!*v) return "network name is empty";
+            for (int i = 0; i < n; i++)
+                if (!strcmp(nw[i].ssid, v)) { snprintf(err, sizeof(err), "\"%s\" is listed twice", v); return err; }
             if (strlen(v) > 32) { snprintf(err, sizeof(err), "\"%.40s\": name longer than 32 bytes", v); return err; }
-            if (strchr(v, '=') || *v == '#') { snprintf(err, sizeof(err), "\"%s\": a name cannot contain \"=\" or start with \"#\"", v); return err; }
-            for (int i = 0; i < nw.n; i++)
-                if (!strcmp(nw.net[i].ssid, v)) { snprintf(err, sizeof(err), "\"%s\" is listed twice", v); return err; }
-            if (nw.n == MAX_NET) return "too many networks";
-            cur = nw.n++;
-            snprintf(nw.net[cur].ssid, sizeof(nw.net[0].ssid), "%s", v);
+            if (n == CONF_MAX_NET) return "too many networks";
+            cur = n++;
+            memset(&nw[cur], 0, sizeof(nw[cur]));
+            snprintf(nw[cur].ssid, sizeof(nw[0].ssid), "%s", v);
         } else if (!strcmp(k, "p") && cur >= 0) {
-            size_t lv = strlen(v);
-            if (lv && (v[0] == ' ' || v[lv - 1] == ' ')) {
-                snprintf(err, sizeof(err), "\"%s\": a password cannot start or end with a space", nw.net[cur].ssid);
-                return err;
-            }
-            if (lv > 64) return "password too long";
-            snprintf(nw.net[cur].psk, sizeof(nw.net[0].psk), "%s", v);
-        } else if (!strcmp(k, "o") && cur >= 0 && !nw.net[cur].psk[0]) {
-            for (int i = 0; i < old.n; i++)
-                if (!strcmp(old.net[i].ssid, v)) { memcpy(nw.net[cur].psk, old.net[i].psk, sizeof(nw.net[0].psk)); break; }
+            if (strlen(v) > 64) return "password too long";
+            snprintf(nw[cur].psk, sizeof(nw[0].psk), "%s", v);
+        } else if (!strcmp(k, "o") && cur >= 0 && !nw[cur].psk[0]) {
+            for (int i = 0; i < conf_wifi_count(); i++)
+                if (!strcmp(conf_wifi(i)->ssid, v)) { memcpy(nw[cur].psk, conf_wifi(i)->psk, sizeof(nw[0].psk)); break; }
         }
     }
-    for (int i = 0; i < nw.n; i++) {
-        const char *e = check_net(nw.net[i].ssid, nw.net[i].psk);
-        if (e) { snprintf(err, sizeof(err), "\"%s\": %s", nw.net[i].ssid, e); return err; }
+    for (int i = 0; i < n; i++) {
+        const char *e = conf_check_net(nw[i].ssid, nw[i].psk);
+        if (e) { snprintf(err, sizeof(err), "\"%s\": %s", nw[i].ssid, e); return err; }
     }
-
-    static char txt[8192];
-    size_t o = (size_t)snprintf(txt, sizeof(txt), "%scountry = %s\n\n", HEADER, nw.country);
-    for (int i = 0; i < nw.n && o < sizeof(txt); i++)
-        o += (size_t)snprintf(txt + o, sizeof(txt) - o, "%s = %s\n", nw.net[i].ssid, nw.net[i].psk);
-    if (o >= sizeof(txt)) return "too much data";
-
-    /* the boot partition is mounted read-only: open it just for the write */
-    if (system("mount -o remount,rw /boot") != 0) return "cannot write to the SD card (remount failed)";
-    int ok = write_file(WIFI_TMP, WIFI_TXT, txt, o) == 0;
-    sync();
-    if (system("mount -o remount,ro /boot") != 0) fprintf(stderr, "[wifi] /boot stays read-write\n");
-    if (!ok) return "writing wifi.txt failed";
-    printf("[wifi] wifi.txt saved from /settings: %d network(s)\n", nw.n);
+    const char *e = conf_set_wifi(nw, n);
+    if (e) return e;
     if (system(WIFI_TOOL " reload </dev/null >/dev/null 2>&1 &") != 0) return "saved, but applying failed";
     return NULL;
 }

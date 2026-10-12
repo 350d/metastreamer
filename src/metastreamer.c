@@ -387,7 +387,7 @@ static void mark_unplugged(void) {
 }
 
 int main(int argc, char **argv) {
-    /* boot-time helper for metastreamer-wifi: wifi.txt -> wpa_supplicant.conf */
+    /* boot-time helper for metastreamer-wifi: [wifi] in metastreamer.txt -> wpa_supplicant.conf */
     if (argc == 4 && !strcmp(argv[1], "--wifi-conf")) return wifi_gen_conf(argv[2], argv[3]);
     int http_port = 80, use_hdmi = 1;
     for (int i = 1; i < argc; i++) {
@@ -396,7 +396,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--hdmi-mode") && i + 1 < argc && hdmi_set_mode(argv[i + 1]) == 0) i++;
         else if (!strcmp(argv[i], "--duml-probe") && i + 1 < argc && sscanf(argv[i + 1], "%x:%x", &probe_set, &probe_id) == 2) i++;
         else { fprintf(stderr, "usage: %s [--http PORT] [--no-hdmi] [--hdmi-mode WxH[@HZ]|auto] [--duml-probe SET:ID]\n"
-                               "       %s --wifi-conf wifi.txt wpa_supplicant.conf\n"
+                               "       %s --wifi-conf metastreamer.txt wpa_supplicant.conf\n"
                                "  --no-hdmi: no display, decoding for /snapshot stays on\n"
                                "  --hdmi-mode: default 1920x1080 (50 Hz, else 60); auto = display's preferred mode\n"
                                "  --duml-probe: research, send request SET:ID (hex) to all known addresses, replies in /duml\n", argv[0], argv[0]); return 2; }

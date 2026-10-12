@@ -26,14 +26,14 @@ A reboot brings back the version in the image.
 
 ```
 metastreamer [--http PORT] [--no-hdmi] [--hdmi-mode WxH[@HZ]|auto] [--duml-probe SET:ID]
-metastreamer --wifi-conf wifi.txt wpa_supplicant.conf
+metastreamer --wifi-conf metastreamer.txt wpa_supplicant.conf
 ```
 
 - `--no-hdmi`: no display; the decoder still runs for `/snapshot`
 - `--hdmi-mode`: default 1920×1080 at 50 Hz (else 60); `auto` takes the display's preferred mode
   (capture cards often prefer 720p)
 - `--duml-probe`: see [protocol.md](protocol.md#research-aids)
-- `--wifi-conf`: used at boot by `metastreamer-wifi` to turn `wifi.txt` into a `wpa_supplicant` config
+- `--wifi-conf`: used at boot by `metastreamer-wifi` to turn the `[wifi]` section into a `wpa_supplicant` config
 
 ## Source
 
@@ -43,8 +43,8 @@ metastreamer --wifi-conf wifi.txt wpa_supplicant.conf
 | `src/hls.c` | H.264 → fMP4 (per-frame stream and HLS), HTTP server, pages, API |
 | `src/hdmi.c` | V4L2 hardware decoder, KMS output, JPEG snapshots |
 | `src/telem.c` | telemetry from DUML, `/duml` monitor |
-| `src/wifi.c` | `wifi.txt`, `/api/wifi`, `/api/net` |
-| `src/conf.c` | `metastreamer.txt`: time zone, network |
+| `src/wifi.c` | Wi-Fi: `wpa_supplicant` config, `/api/wifi`, `/api/net` |
+| `src/conf.c` | `metastreamer.txt`: all settings, read and written in one place |
 | `src/web/settings.html` | the control page (compiled into the binary by `gen_html.py`) |
 
 ## The image

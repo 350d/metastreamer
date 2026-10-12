@@ -1,12 +1,22 @@
-# metastreamer settings.
-# timezone: IANA name such as Europe/Tallinn; the goggles' clock is set to this local time.
-# timezone_auto: yes = follow the browser that opens /settings, no = chosen by hand.
-timezone = 
-timezone_auto = yes
+# metastreamer settings: key="value". Edit them on any computer,
+# or at http://<pi>/settings (which rewrites this file).
 
-# network: dhcp, or static with address (a.b.c.d, or a.b.c.d/prefix; default /24), gateway and dns.
-# A wrong static address makes the bridge unreachable: set network = dhcp here to undo it.
-network = dhcp
-address = 
-gateway = 
-dns = 
+# Two-letter country code: Wi-Fi channels and power limits.
+country=""
+
+# Time zone, an IANA name such as Europe/Tallinn: the goggles' clock is set to this local time.
+# timezone_auto="yes": follow the browser that opens /settings; "no": chosen by hand.
+timezone=""
+timezone_auto="yes"
+
+# Address: network="dhcp", or "static" with address (a.b.c.d; /24 unless a prefix is given), gateway, dns.
+# A wrong static address makes the Pi unreachable over Wi-Fi: set network="dhcp" here to undo it.
+network="dhcp"
+address=""
+gateway=""
+dns=""
+
+# Wi-Fi networks, one per line: "name"="password". The first line has the highest priority;
+# an open network has an empty password (""). The Pi Zero W only sees 2.4 GHz networks.
+[wifi]
+# "My home Wi-Fi"="my password"

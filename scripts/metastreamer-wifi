@@ -1,13 +1,13 @@
 #!/bin/sh
-# metastreamer-wifi: Wi-Fi from wifi.txt on the SD card boot partition (the file is never deleted).
+# metastreamer-wifi: Wi-Fi from metastreamer.txt on the SD card boot partition (the file is never deleted):
+# the networks in its [wifi] section, the address settings (network, address, gateway, dns) above it.
 #   metastreamer-wifi start    at boot: load the driver, build the config, connect;
 #                     then wifi.log on the card: the address, or after 60 s a report (no passwords in it);
 #                     time from NTP as soon as there is an address
-#   metastreamer-wifi reload   after /settings rewrote wifi.txt: re-read the config,
+#   metastreamer-wifi reload   after /settings saved the networks: re-read the config,
 #                     new DHCP lease if the bridge moved to another network
-#   metastreamer-wifi net      after /settings changed the address: DHCP or static from metastreamer.txt
-TXT=/boot/wifi.txt
-BRIDGE=/boot/metastreamer.txt   # network = dhcp | static, address = a.b.c.d/prefix, gateway, dns
+#   metastreamer-wifi net      after /settings changed the address: DHCP or static
+CONFIG=/boot/metastreamer.txt
 CONF=/run/wpa_supplicant.conf
 WPA_PID=/run/wpa_supplicant.pid
 DHCP_PID=/run/udhcpc.wlan0.pid
@@ -18,8 +18,9 @@ running() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 ssid() { iw dev wlan0 link 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p'; }
 # a static address is there before the association, so also require the link
 has_ip() { ip -4 addr show wlan0 2>/dev/null | grep -q "inet " && iw dev wlan0 link 2>/dev/null | grep -q "^Connected"; }
-cfg() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" $BRIDGE 2>/dev/null | tr -d '\r' | tail -1 | sed 's/[[:space:]]*$//'; }
-gen() { /usr/bin/metastreamer --wifi-conf "$TXT" "$CONF" >>$OUT 2>&1; }
+# a setting from metastreamer.txt; only above the first [section], so a network name cannot shadow it
+cfg() { sed -n -e '/^[[:space:]]*\[/q' -e "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" $CONFIG 2>/dev/null | tr -d '\r' | tail -1 | sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/'; }
+gen() { /usr/bin/metastreamer --wifi-conf "$CONFIG" "$CONF" >>$OUT 2>&1; }
 
 # address: static (no waiting for DHCP) or DHCP
 net() {
@@ -77,8 +78,8 @@ report() {
 	{
 		echo "metastreamer-wifi: no IP address $(cut -d' ' -f1 /proc/uptime) s after boot"
 		n=$(grep -c '^network=' $CONF 2>/dev/null)
-		echo "--- wifi.txt: $([ -f $TXT ] && echo present || echo MISSING), networks in config: ${n:-0}"
-		[ "${n:-0}" = 0 ] && echo "!!! no networks: add a line 'name = password' to wifi.txt on the SD card"
+		echo "--- metastreamer.txt: $([ -f $CONFIG ] && echo present || echo MISSING), networks in config: ${n:-0}"
+		[ "${n:-0}" = 0 ] && echo "!!! no networks: add a line 'name=password' under [wifi] in metastreamer.txt on the SD card"
 		echo "--- wlan0"
 		ip addr show wlan0 2>&1
 		iw dev wlan0 link 2>&1
