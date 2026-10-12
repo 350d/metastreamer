@@ -1,8 +1,10 @@
-# metastreamer
+# METASTREAMER for DJI
 
 **Live video from DJI FPV goggles on any HDMI screen and in the browser, from a $15 Raspberry Pi Zero W.**
 
-metastreamer turns a Raspberry Pi Zero W into the "phone" the goggles expect on their USB port. The goggles
+<img width="1280" height="960" alt="2026-10-12 16 10 05" src="https://github.com/user-attachments/assets/1186f50b-d468-483b-a753-c8a305671cf0" />
+
+METASTREAMER turns a Raspberry Pi Zero W into the "phone" the goggles expect on their USB port. The goggles
 stream the live H.264 video and telemetry to it; the Pi shows the video on HDMI with the hardware decoder,
 serves it to browsers with about 0.2 s of latency, and lets you change the air unit's camera settings from
 a web page. The whole system is a 90 MB read-only image that shows a picture about 6 s after power-on.
