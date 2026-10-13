@@ -24,7 +24,10 @@ v3-frameA1-pr.bin      next screens: load 609 (494 cells), every gap split, noth
                        of X and Y (40 characters each).
 v3-frameB0-pr.bin      first screen: load 609, 5 writes dropped.
 v3-frameB1-pr.bin      next screens: load 581 (467 cells), 3 writes dropped: rows 16-17 of digits present, 18-19 missing.
-v3-frameC1-pr.bin      40-character string sent as 30 + 10, "WRAPS" clipped at col 52: no wrap.
+v3-frameC1-pr.bin      40-character string sent as 30 + 10, and "WRAPS" at col 48. It was captured with a version of the
+                       driver that also clipped writes at the edge of the canvas, which is no longer done: the current
+                       driver sends "WRAPS?" and the "?" wraps to the next row, as it does with the old driver. The
+                       40-character string is the same bytes, and only it is shown in images/compare-C.jpg.
 v3-frame{A,B,C}-pr-3frames.bin   three screens in a row, as sent by the driver.
 
 Single frames (one CLEAR ... DRAW), real element strings with the same 106 symbols, for the load model:
