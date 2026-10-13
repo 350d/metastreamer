@@ -113,14 +113,15 @@ HD canvas of 53x20 cells (the same in Betaflight and INAV mode), they sit in thr
 | Zone | Cells | What |
 | --- | --- | --- |
 | A | rows 5-7, columns 44-49 | remaining recording time of the air unit and of the goggles |
-| B | rows 15-16, columns 36-49 | notifications, with their own background |
-| C | row 18, columns 35-48 | air unit voltage, link, bitrate, goggles battery |
+| B | rows 15-17, columns 36-49 | notifications, with their own background |
+| C | rows 18-19, columns 35-49 | air unit voltage, link, bitrate, goggles battery |
 
 ![DJI's widgets on the 53x20 grid](images/dji-safe-zone.jpg)
 
 Measured on Goggles 2 (firmware 2025-02) with the default goggles interface, in 12 frames of the Betaflight mode and
 9 of the INAV mode that show only the test marker. Other goggles settings, other firmware and the Normal canvas mode
 were not measured.
+Re-measured on 2026-10-13: the notifications take row 17 too, and the status bar rows 18-19 up to column 49.
 
 The raw captures of this series, about 80 snapshots with their logs, are in the release
 [msp-osd-bench-2026-10-12](https://github.com/350d/metastreamer/releases/tag/msp-osd-bench-2026-10-12).
