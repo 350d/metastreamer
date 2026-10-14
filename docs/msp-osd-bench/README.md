@@ -41,6 +41,8 @@ Python 3 with `pyserial` and `Pillow`.
 | `msplab.py` | The fake flight controller. Answers the air unit's MSP polls like Betaflight 4.5, disarmed, keeps a DisplayPort session alive, and runs short experiments (sub-commands, attributes, canvas, font pages, persistence, MSP v2 and more), each with snapshots and a contact sheet. Also the library of the other two. |
 | `fastlab.py` | Finds how much OSD the goggles accept in one frame, by bisection. Read its docstring first. |
 | `osdrate.py` | How fast the goggles really redraw, and whether the frames tear. |
+| `motion_usb.py`, `cms_usb.py` | The flight controller runs without a sniffer: snapshots, attitude and the driver's debug values over USB; the CMS driven with `MSP_SET_RAW_RC`. |
+| `motion_gif.py` | The before/after loops from two motion runs. |
 | `budget_model.py` | The size of a screen in the goggles' encoding (see "The exact limit"), checked against every bisection below. |
 | `streams/` | Raw MSP byte streams of real Betaflight OSD frames, see `streams/README.txt`. |
 
@@ -126,6 +128,9 @@ read row by row as 265 little-endian 32 bit words, each coded in LEB128 (1 byte 
 - With the goggles in INAV mode the encoding is a different one, not modelled: a cell costs 17 to 20 units of about
   10200 depending on its code, and where it falls in a word hardly matters.
 
+![Random screens: the bytes decide, not the cells](images/model-random.jpg)
+![The same 400 cells, shifted by two: one shown, one discarded](images/model-align.jpg)
+![850 cells of 0x01 shown, 638 of X discarded](images/model-glyph.jpg)
 ![Erasing with spaces against erasing with 0](images/erase-zero.jpg)
 
 New `fastlab.py` groups: `cheap` (every code above the X limit), `mix`, `checker`, `align`, `erase`, `release`, `nul`,
@@ -167,7 +172,10 @@ stick overlays, PIDs, GPS, timers, battery and power values and warnings:
 The flight controller was turned by hand for 30 s per run so that the horizon and values change every frame, and the
 goggles were snapshotted twice a second. These loops play 10 s of those snapshots at twice the speed, master on the
 left and the pull request on the right. For master they are the 10 s of the run with the most elements missing, by
-the lit pixels of the snapshots; the two sides are separate runs, not the same moment:
+the lit pixels of the snapshots; the two sides are separate runs, not the same moment. Master was run on 2026-10-13
+with the sniffer; the right side is the pull request at 0b263577d (the exact DJI limit, 0 for blank cells) on
+2026-10-14, the 10 s with the most roll, run without a sniffer (`motion_usb.py`); the layout picture is from that run.
+All 52 and 60 snapshots of those runs show the whole screen. `motion_gif.py` builds the loops:
 
 ![master and the pull request at osd_framerate_hz 12](images/motion-12hz.gif)
 ![master and the pull request at osd_framerate_hz 30](images/motion-30hz.gif)
