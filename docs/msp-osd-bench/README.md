@@ -128,3 +128,20 @@ The raw captures of this series, about 80 snapshots with their logs, are in the 
 [msp-osd-bench-2026-10-12](https://github.com/350d/metastreamer/releases/tag/msp-osd-bench-2026-10-12).
 
 metastreamer is an independent project. It is not affiliated with, endorsed by or connected to DJI.
+
+## On a flight controller
+
+For the results in betaflight/betaflight#15828 the fake flight controller was replaced by a Mamba F722
+(MAMBAF722_I2C) running master or the pull request, on UART2 at 115200, with a USB-UART adapter listening on its TX
+line. The layout is a heavy one with 50 elements, among them the artificial horizon and sidebars, the compass bar, both
+stick overlays, PIDs, GPS, timers, battery and power values and warnings:
+
+![The layout of the flight controller tests](images/osd-layout-heavy.jpg)
+
+The flight controller was turned by hand for 30 s per run so that the horizon and values change every frame, and the
+goggles were snapshotted twice a second. These loops play those snapshots at twice the speed, master on the left and
+the pull request on the right; the two sides are separate runs of 30 s, not the same moment:
+
+![master and the pull request at osd_framerate_hz 12](images/motion-12hz.gif)
+![master and the pull request at osd_framerate_hz 30](images/motion-30hz.gif)
+
