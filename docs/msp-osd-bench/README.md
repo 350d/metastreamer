@@ -41,6 +41,7 @@ Python 3 with `pyserial` and `Pillow`.
 | `msplab.py` | The fake flight controller. Answers the air unit's MSP polls like Betaflight 4.5, disarmed, keeps a DisplayPort session alive, and runs short experiments (sub-commands, attributes, canvas, font pages, persistence, MSP v2 and more), each with snapshots and a contact sheet. Also the library of the other two. |
 | `fastlab.py` | Finds how much OSD the goggles accept in one frame, by bisection. Read its docstring first. |
 | `osdrate.py` | How fast the goggles really redraw, and whether the frames tear. |
+| `budget_model.py` | The size of a screen in the goggles' encoding (see "The exact limit"), checked against every bisection below. |
 | `streams/` | Raw MSP byte streams of real Betaflight OSD frames, see `streams/README.txt`. |
 
 ## Status of the scripts
@@ -87,9 +88,10 @@ HD canvas, 53 columns by 20 rows. N is the number of cells written since the las
 
 The limit is not a plain count of cells. Other things that were measured:
 
-- Spaces count like any other cell. Rewriting a cell is free. Erasing with spaces gives nothing back. Only a clear frees.
+- Spaces count like any other cell. Rewriting a cell is free. Erasing with spaces gives nothing back, erasing with 0 does.
 - The order of the writes does not matter.
-- No glyph code costs more than about 1% over an X (all 256 were checked). Codes 1 and 6 cost about 0.75.
+- No glyph code costs more than an X (all 256 were checked). Codes 0x01-0x0F fit 850 cells in solid rows of 53, code 0
+  any number: a 0 inside a `WRITE_STRING` is a blank cell, not the end of the string.
 - Solid rows of 40 to 52 cells: 617 to 629 cells. Runs of 2, 3, 5, 10 and 25 cells with one blank between: 471, 512, 563,
   586 and 613. Pairs with a three-cell gap: 396.
 - `WRITE_STRING` draws 32 characters, a string past column 52 continues on the next row.
@@ -104,6 +106,30 @@ The limit is not a plain count of cells. Other things that were measured:
 ![620 cells shown, 621 discarded](images/limit-solid.jpg)
 ![Spaces count](images/spaces-count.jpg)
 ![INAV mode: the font pages](images/inav-attr-pages.jpg)
+
+## The exact limit (2026-10-14, Betaflight mode)
+
+The goggles judge the screen they hold at the draw, in an encoding: the 53x20 cells, a byte each and 0 for a blank one,
+read row by row as 265 little-endian 32 bit words, each coded in LEB128 (1 byte below 2^7, 2 below 2^14, 3 below 2^21,
+4 below 2^28, 5 above). A screen of up to 902 bytes is shown, one of 903 or more is discarded.
+
+- `budget_model.py` gives 901-902 bytes at every limit measured above (38 bisections: solid rows, runs, isolated cells,
+  pairs, glyph codes, mixes of glyphs) and 903-905 one cell further.
+- Eight random screens of random glyphs, made to come to 898-908 bytes, were shown or discarded exactly as the model said;
+  a screen of 392 cells was discarded and one of 438 shown.
+- So a space costs like any other glyph, a cell erased with 0 costs nothing (500 X drawn, 200 erased with 0, 250 more:
+  shown; erased with spaces: discarded), and the look of a glyph does not matter (invisible 0xA0 costs like X).
+- What a word costs depends on its last cell that is not blank: codes 0x01-0x0F in the fourth cell of a word are cheaper,
+  so 0x01 alternating with X fits 850 cells in one phase and 637 in the other, and pairs XX fit 318 to more than 502 cells
+  depending on where they fall in the words. A checkerboard of X fits 425, the same cells as columns 361.
+- `MSP_DP_RELEASE` blanks the OSD, and what is written after it is not drawn until a clear.
+- With the goggles in INAV mode the encoding is a different one, not modelled: a cell costs 17 to 20 units of about
+  10200 depending on its code, and where it falls in a word hardly matters.
+
+![Erasing with spaces against erasing with 0](images/erase-zero.jpg)
+
+New `fastlab.py` groups: `cheap` (every code above the X limit), `mix`, `checker`, `align`, `erase`, `release`, `nul`,
+`inavmodel`. Raw results of that day are in the release `msp-osd-bench-2026-10-14`.
 
 ## DJI's own interface on top of the OSD
 

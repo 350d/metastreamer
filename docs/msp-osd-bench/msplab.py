@@ -10,7 +10,7 @@ per experiment shows all steps at once.
   msplab.py run voltage [--out DIR]       which reply the OSD voltage comes from
   msplab.py run subcmd|attr|sys|grid|font
 
-Needs pyserial and Pillow. It never arms: STATUS always reports disarmed.
+Needs pyserial and Pillow. STATUS reports disarmed unless an experiment sets FC.armed.
 """
 import argparse, os, struct, sys, threading, time, urllib.request
 
@@ -49,6 +49,7 @@ class FC:
         self.override = {}   # cmd -> raw reply bytes, for format experiments
         self.variant = b'BTFL'
         self.mute = False    # stop answering: the air unit then treats the FC as gone
+        self.armed = False   # STATUS flightModeFlags bit 0: the O3 leaves low-power only on a disarmed -> armed edge
 
     def write(self, b):
         with self.wlock:
@@ -62,8 +63,10 @@ class FC:
         if cmd == FC_VERSION: return bytes([4, 5, 0])
         if cmd == NAME: return b'MSPLAB'
         if cmd in (STATUS, STATUS_EX):
-            # cycleTime u16, i2cErrors u16, sensors u16, flightModeFlags u32 (bit 0 = armed: never), pidProfile u8
-            return struct.pack('<HHHIB', 125, 0, 0x23, 0, 0)
+            # Betaflight layout, as ExpressLRS SerialDisplayport sends it (22 bytes): cycleTime u16, i2cErrors u16,
+            # sensors u16, flightModeFlags u32 (bit 0 = armed), pidProfile u8, load u16, gyroCycle u16,
+            # extra mode-flag bytes u8, arming-disable count u8, arming-disable flags u32, config state u8
+            return struct.pack('<HHHIBHHBBIB', 125, 0, 0x23, 1 if self.armed else 0, 0, 0, 0, 0, 1, 0 if self.armed else 1, 0)
         if cmd == ANALOG:
             # Betaflight: vbat u8 (0.1 V), mAh u16, rssi u16, amperage i16 (0.01 A), vbat u16 (0.01 V)
             return struct.pack('<BHHhH', min(255, t['vbat_cv'] // 10), t['mah'], t['rssi'], t['amps_ca'], t['vbat_cv'])
@@ -419,13 +422,21 @@ EXPERIMENTS = dict(voltage=exp_voltage, subcmd=exp_subcmd, attr=exp_attr, sys=ex
 def main():
     import serial
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('mode', choices=['serve', 'run'])
+    ap.add_argument('mode', choices=['serve', 'run', 'demo'])
     ap.add_argument('experiment', nargs='?', choices=sorted(EXPERIMENTS))
-    ap.add_argument('--port', default='/dev/ttyUSB0', help='serial port wired to the air unit UART (macOS: /dev/cu.usbserial-*)')
+    ap.add_argument('--port', default='/dev/cu.usbserial-0001')
     ap.add_argument('--baud', type=int, default=115200)
-    ap.add_argument('--snap', default='http://metastreamer/snapshot', help='URL of metastreamer /snapshot')
+    ap.add_argument('--snap', default='http://192.168.11.164/snapshot')
     ap.add_argument('--out', default='msplab-out')
     ap.add_argument('--dwell', type=float, default=1.5, help='seconds between drawing and the snapshot')
+    ap.add_argument('--effect', choices=['scroller', 'matrix'], default='scroller', help='demo: the effect')
+    ap.add_argument('--text', help='demo scroller: the message')
+    ap.add_argument('--budget', type=int, help='demo matrix: load the rain is kept under (default: displayport_msp_cell_budget - 20)')
+    ap.add_argument('--no-safe', action='store_true', help='demo: draw over the goggles\' own UI too (no safe zone)')
+    ap.add_argument('--fps', type=float, help='demo: frames a second (default by effect: scroller 12, matrix 6; a frame is 0.5-1 KB, UART-bound)')
+    ap.add_argument('--step', type=int, default=1, help='demo: cells the text moves a frame (speed = fps * step cells a second)')
+    ap.add_argument('--seconds', type=float, default=0, help='demo: stop after (0 = until Ctrl-C)')
+    ap.add_argument('--grab', type=int, default=0, help='demo: snapshots to save into --out, spread over the run')
     ap.add_argument('--sd', action='store_true', help='report SD video instead of HD')
     ap.add_argument('--variant', default='BTFL', help='FC_VARIANT to report (BTFL, INAV, ARDU, ...)')
     a = ap.parse_args()
@@ -438,6 +449,31 @@ def main():
     # the goggles ignore DisplayPort for the first ~8 s of a new session: keep drawing a marker until then
     for _ in range(9):
         fc.clear(); fc.text(0, 0, 'MSPLAB'); fc.draw(); time.sleep(1.0)
+    if a.mode == 'demo':
+        import osd_scroller
+        os.makedirs(a.out, exist_ok=True)
+        shots = []
+        def on_frame(n, strs, load):
+            if every and n % every == every // 2:
+                p = os.path.join(a.out, f'scroller{len(shots):02d}.jpg')
+                time.sleep(0.4)
+                if snapshot(a.snap, p): shots.append((p, f'frame {n}, load {load:.0f}'))
+        make, fps = osd_scroller.EFFECTS[a.effect]
+        kw = {}
+        if a.effect == 'scroller':
+            kw = dict(step=a.step)
+            if a.text: kw['text'] = a.text.upper()
+        if a.effect == 'matrix' and a.budget:
+            kw = dict(budget=a.budget)
+        gen = make(**kw)
+        every = max(1, int((a.fps or fps) * a.seconds / a.grab)) if a.grab and a.seconds else 0
+        kw = dict(fps=a.fps or fps, seconds=a.seconds, baud=a.baud, on_frame=on_frame, safe=not a.no_safe)
+        n, load, dropped, errs = osd_scroller.run(fc, gen, **kw)
+        e = sorted(x * 1000 for x in errs[30:]) or [0]            # without the warm-up of the wire-time fit
+        print(f'[demo] {n} frames, max load {load:.0f} of {osd_scroller.CELL_BUDGET}, {dropped} slots dropped; '
+              f'DRAW vs the clock grid: median {e[len(e)//2]:+.1f} ms, 5..95 % {e[len(e)//20]:+.1f} .. {e[len(e)*19//20]:+.1f} ms, worst {e[0]:+.1f} .. {e[-1]:+.1f} ms', flush=True)
+        if shots: contact_sheet(shots, os.path.join(a.out, 'scroller-sheet.jpg'), cols=2)
+        return
     if a.mode == 'serve':
         while True:
             fc.clear(); fc.text(0, 0, f'MSPLAB {a.variant.upper()}')
