@@ -87,8 +87,9 @@ it fast. The binary is about 190 KB, and the whole system uses about 90 MB of th
 
 ## Quick start
 
-1. Write [`images/metastreamer-rpi0w.img.xz`](images/) to the card with Raspberry Pi Imager or balenaEtcher
-   (both take the `.xz` as it is), or build your own (see [Building](#building)).
+1. Write [`images/metastreamer-rpi0w.img`](images/) to the card with Raspberry Pi Imager or balenaEtcher,
+   or build your own (see [Building](#building)). The image is not compressed: balenaEtcher failed to
+   verify the `.xz` of the same image, and the card did not boot.
 2. Open the card's boot partition (`METASTREAM`) on your computer and fill in `metastreamer.txt`:
    your country code, and your Wi-Fi under `[wifi]`, one network per line:
 
@@ -190,7 +191,7 @@ docker/         build environment for the image
 contrib/        systemd units for Raspberry Pi OS / DietPi
 tools/          image build, quick static build with zig
 docs/           protocol notes, development
-images/         the ready image for a Raspberry Pi Zero W (.img.xz)
+images/         the ready image for a Raspberry Pi Zero W (.img, not compressed)
 ```
 
 ## Credits
