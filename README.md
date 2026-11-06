@@ -21,7 +21,8 @@ a web page. The whole system is a 90 MB read-only image that shows a picture abo
 - **Clock**: NTP over Wi-Fi, local time zone, and it sets the goggles' clock for correct recording dates
 - **USB**: an Android accessory gadget served through FunctionFS, no tty in the data path; a restart or a
   replugged cable gives a new session within seconds
-- **Power modes**: `power="full"`, `"low"` or `"min"` (no Wi-Fi) for goggles that cannot supply the Pi
+- **Power modes**: `power="low"` by default for goggles that power the Pi, `"min"` without Wi-Fi, `"full"`
+  on a separate supply
 - **Appliance-style system**: Buildroot, read-only root, hardware watchdog, survives HDMI hot-plug
 
 > metastreamer is an independent project. It is not affiliated with, endorsed by or connected to DJI.
@@ -78,8 +79,9 @@ it fast. The binary is about 190 KB, and the whole system uses about 90 MB of th
 - mini-HDMI cable to a display or a capture card (optional)
 - Power: the Pi's PWR port, or from the goggles over the same cable (keep the goggles battery charged:
   below ~25 % the Pi may brown out). Not every pair of goggles supplies enough: random kernel crashes a few
-  seconds after start mean too little current. `power="low"` in `metastreamer.txt` makes the Pi draw less (CPU at
-  most 700 MHz, Wi-Fi power saving), `power="min"` less still (no Wi-Fi: HDMI only, set it back on the card);
+  seconds after start mean too little current. `power` in `metastreamer.txt`: `"low"` (the default) makes the Pi draw
+  less (CPU at most 700 MHz, Wi-Fi power saving), `"min"` less still (no Wi-Fi: HDMI only, set it back on the
+  card), `"full"` is for a separate supply;
   `/status` shows `undervoltage` when the firmware sees it. With the Pi on its own supply, the goggles may not
   start the USB session while the Pi feeds 5 V back into the cable: use a cable or adapter without VBUS.
 
@@ -123,7 +125,7 @@ The boot partition (FAT, `METASTREAM`) holds everything you may want to change; 
 
 | File | What it is |
 |---|---|
-| `metastreamer.txt` | All settings, `key="value"`: `country`, `timezone`, `timezone_auto`, `network` (`"dhcp"` or `"static"`), `address`, `gateway`, `dns`, `power` (`"full"`, `"low"` or `"min"`); then the Wi-Fi networks under `[wifi]`, one `"name"="password"` per line, the first one preferred |
+| `metastreamer.txt` | All settings, `key="value"`: `country`, `timezone`, `timezone_auto`, `network` (`"dhcp"` or `"static"`), `address`, `gateway`, `dns`, `power` (`"low"`, the default, `"min"` or `"full"`); then the Wi-Fi networks under `[wifi]`, one `"name"="password"` per line, the first one preferred |
 | `authorized_keys` | Optional: SSH public keys for `root` (there is no password login) |
 | `ssh_host_ed25519_key`, `.pub` | Made on the first boot: the Pi's SSH identity, kept across reboots |
 | `wifi.log` | Written by the Pi: the address it got, or a report when Wi-Fi did not come up (no passwords in it) |

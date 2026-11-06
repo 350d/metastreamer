@@ -38,7 +38,7 @@ typedef struct {
     ConfNet nets[CONF_MAX_NET];
 } Conf;
 
-static Conf cf = {.tz_auto = 1};
+static Conf cf = {.tz_auto = 1, .power = POWER_LOW};
 static unsigned gen, sync_gen;
 
 static char *trim(char *s) {
@@ -101,7 +101,7 @@ const char *conf_check_net(const char *ssid, const char *psk) {
 }
 
 int conf_read(const char *path) {
-    Conf c = {.tz_auto = 1};
+    Conf c = {.tz_auto = 1, .power = POWER_LOW};
     FILE *f = fopen(path, "r");
     if (!f) { cf = c; return -1; }
     char line[512];
@@ -150,7 +150,7 @@ int conf_read(const char *path) {
                 else if (*v) fprintf(stderr, "[conf] unknown time zone \"%s\", using UTC\n", v);
             }
             else if (!strcasecmp(k, "network")) c.net_static = !strcasecmp(v, "static");
-            else if (!strcasecmp(k, "power")) c.power = !strcasecmp(v, "min") ? POWER_MIN : !strcasecmp(v, "low") ? POWER_LOW : POWER_FULL;
+            else if (!strcasecmp(k, "power")) c.power = !strcasecmp(v, "min") ? POWER_MIN : !strcasecmp(v, "full") ? POWER_FULL : POWER_LOW;
             else if (!strcasecmp(k, "address") && valid_cidr(v)) snprintf(c.addr, sizeof(c.addr), strchr(v, '/') ? "%s" : "%s/24", v);
             else if (!strcasecmp(k, "gateway") && valid_ip(v)) snprintf(c.gw, sizeof(c.gw), "%s", v);
             else if (!strcasecmp(k, "dns") && valid_ip(v)) snprintf(c.dns, sizeof(c.dns), "%s", v);
@@ -206,9 +206,9 @@ static const char *save(const Conf *c) {
         "# Address: network=\"dhcp\", or \"static\" with address (a.b.c.d; /24 unless a prefix is given), gateway, dns.\n"
         "# A wrong static address makes the Pi unreachable over Wi-Fi: set network=\"dhcp\" here to undo it.\n"
         "network=\"%s\"\naddress=\"%s\"\ngateway=\"%s\"\ndns=\"%s\"\n\n"
-        "# Power: \"full\"; \"low\" when the goggles cannot supply enough current (the Pi crashes or reboots a few\n"
-        "# seconds after it starts, seen with Goggles Integra): CPU at most 700 MHz, Wi-Fi power saving and 10 dBm;\n"
-        "# \"min\": \"low\" with Wi-Fi off, HDMI only (no browser, no SSH: change it back here, on the card).\n"
+        "# Power: \"low\" (the default): CPU at most 700 MHz, Wi-Fi power saving and 10 dBm, for goggles that power the Pi;\n"
+        "# \"full\" on a separate supply; \"min\": \"low\" with Wi-Fi off, HDMI only (no browser, no SSH: change it back\n"
+        "# here, on the card), when the goggles still cannot supply enough (the Pi crashes a few seconds after start).\n"
         "power=\"%s\"\n\n"
         "# Wi-Fi networks, one per line: \"name\"=\"password\". The first line has the highest priority;\n"
         "# an open network has an empty password (\"\"). The Pi Zero W only sees 2.4 GHz networks.\n"

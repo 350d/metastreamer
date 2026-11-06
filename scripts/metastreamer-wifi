@@ -43,7 +43,7 @@ net() {
 
 up() {
 	running $WPA_PID || wpa_supplicant -B -i wlan0 -c $CONF -P $WPA_PID -f /run/wpa_supplicant.log >>$OUT 2>&1
-	if [ "$(cfg power)" = low ]; then   # less current: the goggles' USB port may not supply a Pi at full power
+	if [ "$(cfg power)" != full ]; then   # less current: the goggles' USB port may not supply a Pi at full power
 		iw dev wlan0 set power_save on 2>/dev/null
 		iw dev wlan0 set txpower fixed 1000 2>/dev/null
 	else
