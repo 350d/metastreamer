@@ -106,7 +106,7 @@ static int create(void) {
     }
     if (putf("strings/0x409/serialnumber", "0123456789ABCDEF") || putf("strings/0x409/manufacturer", "metastreamer") ||
         putf("strings/0x409/product", "metastreamer") ||
-        putf("configs/c.1/strings/0x409/configuration", "Config 1: AOA") || putf("configs/c.1/MaxPower", "250"))
+        putf("configs/c.1/strings/0x409/configuration", "Config 1: AOA") || putf("configs/c.1/MaxPower", "500"))
         return -1;
     mkdir(FFS_MOUNT, 0755);
     if (mount(FFS_NAME, FFS_MOUNT, "functionfs", 0, NULL) < 0) { perror("[usb] mount functionfs"); return -1; }

@@ -33,6 +33,7 @@ typedef struct {
     int tz_auto;
     int net_static;
     char addr[20], gw[16], dns[16];
+    int power_low;
     int n;
     ConfNet nets[CONF_MAX_NET];
 } Conf;
@@ -149,6 +150,7 @@ int conf_read(const char *path) {
                 else if (*v) fprintf(stderr, "[conf] unknown time zone \"%s\", using UTC\n", v);
             }
             else if (!strcasecmp(k, "network")) c.net_static = !strcasecmp(v, "static");
+            else if (!strcasecmp(k, "power")) c.power_low = !strcasecmp(v, "low");
             else if (!strcasecmp(k, "address") && valid_cidr(v)) snprintf(c.addr, sizeof(c.addr), strchr(v, '/') ? "%s" : "%s/24", v);
             else if (!strcasecmp(k, "gateway") && valid_ip(v)) snprintf(c.gw, sizeof(c.gw), "%s", v);
             else if (!strcasecmp(k, "dns") && valid_ip(v)) snprintf(c.dns, sizeof(c.dns), "%s", v);
@@ -169,8 +171,8 @@ static void apply_tz(void) {
 void conf_load(void) {
     if (conf_read(CONF_TXT) < 0) fprintf(stderr, "[conf] no %s, defaults\n", CONF_TXT);
     apply_tz();
-    printf("[conf] time zone %s, network %s, %d Wi-Fi network(s)\n",
-           cf.tz[0] ? cf.tz : "UTC (not set)", cf.net_static ? cf.addr : "dhcp", cf.n);
+    printf("[conf] time zone %s, network %s, %d Wi-Fi network(s), power %s\n",
+           cf.tz[0] ? cf.tz : "UTC (not set)", cf.net_static ? cf.addr : "dhcp", cf.n, cf.power_low ? "low" : "full");
 }
 
 const char *conf_country(void) { return cf.country; }
@@ -183,6 +185,7 @@ int conf_net_static(void) { return cf.net_static; }
 const char *conf_net_address(void) { return cf.addr; }
 const char *conf_net_gateway(void) { return cf.gw; }
 const char *conf_net_dns(void) { return cf.dns; }
+int conf_power_low(void) { return cf.power_low; }
 int conf_wifi_count(void) { return cf.n; }
 const ConfNet *conf_wifi(int i) { return i >= 0 && i < cf.n ? &cf.nets[i] : NULL; }
 
@@ -201,11 +204,14 @@ static const char *save(const Conf *c) {
         "# Address: network=\"dhcp\", or \"static\" with address (a.b.c.d; /24 unless a prefix is given), gateway, dns.\n"
         "# A wrong static address makes the Pi unreachable over Wi-Fi: set network=\"dhcp\" here to undo it.\n"
         "network=\"%s\"\naddress=\"%s\"\ngateway=\"%s\"\ndns=\"%s\"\n\n"
+        "# Power: \"full\", or \"low\" when the goggles cannot supply enough current (the Pi crashes or reboots a few\n"
+        "# seconds after it starts, seen with Goggles Integra): CPU at most 700 MHz, Wi-Fi power saving and 10 dBm.\n"
+        "power=\"%s\"\n\n"
         "# Wi-Fi networks, one per line: \"name\"=\"password\". The first line has the highest priority;\n"
         "# an open network has an empty password (\"\"). The Pi Zero W only sees 2.4 GHz networks.\n"
         "[wifi]\n",
         c->country, c->tz, c->tz_auto ? "yes" : "no",
-        c->net_static ? "static" : "dhcp", c->addr, c->gw, c->dns);
+        c->net_static ? "static" : "dhcp", c->addr, c->gw, c->dns, c->power_low ? "low" : "full");
     if (!c->n) OUT("# \"My home Wi-Fi\"=\"my password\"\n");
     for (int i = 0; i < c->n; i++) OUT("\"%s\"=\"%s\"\n", c->nets[i].ssid, c->nets[i].psk);
 #undef OUT

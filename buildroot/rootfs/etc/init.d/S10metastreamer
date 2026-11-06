@@ -4,6 +4,7 @@
 G=/sys/kernel/config/usb_gadget/metastreamer/UDC
 case "$1" in
 start)
+	modprobe raspberrypi-hwmon 2>/dev/null   # under-voltage flag for /status
 	(
 		while true; do
 			/usr/bin/metastreamer 2>&1 | logger -t metastreamer

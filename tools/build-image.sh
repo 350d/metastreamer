@@ -19,7 +19,7 @@ docker run --rm -v "$WORK_VOLUME":/work -v "$PWD":/src -e BR_VERSION="$BR_VERSIO
 	fi
 	cd /work/buildroot
 	make O=/work/out BR2_EXTERNAL=/src/buildroot metastreamer_rpi0w_defconfig >/dev/null
-	make O=/work/out metastreamer-dirclean >/dev/null
+	make O=/work/out metastreamer-dirclean rpi-firmware-dirclean >/dev/null   # both copy files from this repo
 	make O=/work/out
 	cp /work/out/images/sdcard.img /src/out/metastreamer-rpi0w.img
 '

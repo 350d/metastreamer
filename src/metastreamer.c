@@ -378,10 +378,49 @@ static int duml_console_send(uint8_t dst, uint8_t set, uint8_t id, const uint8_t
     return 0;
 }
 
+/* ---- power: power="low" caps the CPU (the goggles' USB port may not supply a Pi at full speed);
+ * the firmware's under-voltage flag (raspberrypi-hwmon, loaded by the init script) is logged and in /status ---- */
+#define CPU_MAX_FREQ "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"
+static char uv_path[64];
+static int uv_now, uv_seen;
+
+static void power_start(void) {
+    if (conf_power_low()) {
+        FILE *f = fopen(CPU_MAX_FREQ, "w");
+        if (f && fputs("700000", f) >= 0 && fclose(f) == 0) printf("[power] low: CPU at most 700 MHz\n");
+        else { perror("[power] " CPU_MAX_FREQ); if (f) fclose(f); }
+    }
+    for (int i = 0; i < 8 && !uv_path[0]; i++) {
+        char p[64], name[16] = "";
+        snprintf(p, sizeof(p), "/sys/class/hwmon/hwmon%d/name", i);
+        FILE *f = fopen(p, "r");
+        if (!f) continue;
+        if (fgets(name, sizeof(name), f) && !strncmp(name, "rpi_volt", 8))
+            snprintf(uv_path, sizeof(uv_path), "/sys/class/hwmon/hwmon%d/in0_lcrit_alarm", i);
+        fclose(f);
+    }
+}
+
+static void power_poll(void) {
+    static double last;
+    double t = now();
+    if (!uv_path[0] || t - last < 1.0) return;
+    last = t;
+    FILE *f = fopen(uv_path, "r");
+    if (!f) return;
+    int v = fgetc(f) == '1';
+    fclose(f);
+    if (v != uv_now) printf("[power] %s\n", v ? "UNDER-VOLTAGE: the supply (the goggles?) cannot keep up" : "voltage back to normal");
+    uv_now = v; uv_seen |= v;
+}
+
 static size_t link_json(char *o, size_t cap) {
-    int n = snprintf(o, cap, "{\"registered\":%s,\"video_bytes\":%llu,\"duml_bytes\":%llu,\"goggles_clock\":%s%s%s}",
+    int n = snprintf(o, cap, "{\"registered\":%s,\"video_bytes\":%llu,\"duml_bytes\":%llu,\"goggles_clock\":%s%s%s,"
+                     "\"power\":\"%s\",\"undervoltage\":%s,\"undervoltage_seen\":%s}",
                      registered ? "true" : "false", port_bytes_video, port_bytes_other,
-                     goggles_clock[0] ? "\"" : "", goggles_clock[0] ? goggles_clock : "null", goggles_clock[0] ? "\"" : "");
+                     goggles_clock[0] ? "\"" : "", goggles_clock[0] ? goggles_clock : "null", goggles_clock[0] ? "\"" : "",
+                     conf_power_low() ? "low" : "full", !uv_path[0] ? "null" : uv_now ? "true" : "false",
+                     !uv_path[0] ? "null" : uv_seen ? "true" : "false");
     return n < (int)cap ? (size_t)n : cap - 1;
 }
 
@@ -411,6 +450,7 @@ int main(int argc, char **argv) {
     conf_load();
     setvbuf(stdout, NULL, _IOLBF, 0);
 
+    power_start();
     if (usb_start() < 0) return 1;
     hls_start(http_port);
     hls_set_link_fn(link_json);
@@ -446,6 +486,7 @@ int main(int argc, char **argv) {
         duml_probe();
 
         usb_tick();
+        power_poll();
 
         double t = now();
         if (usb_enabled() && !usb_restarting() && t - last_rx > 10.0) {

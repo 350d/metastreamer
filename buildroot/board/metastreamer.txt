@@ -16,6 +16,10 @@ address=""
 gateway=""
 dns=""
 
+# Power: "full", or "low" when the goggles cannot supply enough current (the Pi crashes or reboots a few
+# seconds after it starts, seen with Goggles Integra): CPU at most 700 MHz, Wi-Fi power saving and 10 dBm.
+power="full"
+
 # Wi-Fi networks, one per line: "name"="password". The first line has the highest priority;
 # an open network has an empty password (""). The Pi Zero W only sees 2.4 GHz networks.
 [wifi]

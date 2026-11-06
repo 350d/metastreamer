@@ -29,7 +29,7 @@ a web page. The whole system is a 90 MB read-only image that shows a picture abo
 | Goggles | USB product code | Status |
 |---|---|---|
 | DJI Goggles 2 | ZV900 | **Tested** (with the O3 Air Unit) |
-| DJI Goggles Integra | ZV901 | Expected to work: same USB link and protocol |
+| DJI Goggles Integra | ZV901 | Reported: the Pi crashes a few seconds after start when powered from the goggles; try `power="low"` or a separate supply |
 | DJI Goggles 3 | ZV902 | Expected to work: same USB link and protocol |
 | DJI Goggles N3 | ZV300 | Expected to work: same USB link and protocol |
 | DJI FPV Goggles V1 / V2 | — | Not supported: older generation, different link |
@@ -73,7 +73,10 @@ it fast. The binary is about 190 KB, and the whole system uses about 90 MB of th
   into the Pi's **USB** port (not PWR). The goggles must be the USB host.
 - mini-HDMI cable to a display or a capture card (optional)
 - Power: the Pi's PWR port, or from the goggles over the same cable (keep the goggles battery charged:
-  below ~25 % the Pi may brown out)
+  below ~25 % the Pi may brown out). Not every pair of goggles supplies enough: random kernel crashes a few
+  seconds after start mean too little current. `power="low"` in `metastreamer.txt` makes the Pi draw less;
+  `/status` shows `undervoltage` when the firmware sees it. With the Pi on its own supply, the goggles may not
+  start the USB session while the Pi feeds 5 V back into the cable: use a cable or adapter without VBUS.
 
 ## Quick start
 
@@ -115,7 +118,7 @@ The boot partition (FAT, `METASTREAM`) holds everything you may want to change; 
 
 | File | What it is |
 |---|---|
-| `metastreamer.txt` | All settings, `key="value"`: `country`, `timezone`, `timezone_auto`, `network` (`"dhcp"` or `"static"`), `address`, `gateway`, `dns`; then the Wi-Fi networks under `[wifi]`, one `"name"="password"` per line, the first one preferred |
+| `metastreamer.txt` | All settings, `key="value"`: `country`, `timezone`, `timezone_auto`, `network` (`"dhcp"` or `"static"`), `address`, `gateway`, `dns`, `power` (`"full"` or `"low"`); then the Wi-Fi networks under `[wifi]`, one `"name"="password"` per line, the first one preferred |
 | `authorized_keys` | Optional: SSH public keys for `root` (there is no password login) |
 | `ssh_host_ed25519_key`, `.pub` | Made on the first boot: the Pi's SSH identity, kept across reboots |
 | `wifi.log` | Written by the Pi: the address it got, or a report when Wi-Fi did not come up (no passwords in it) |
