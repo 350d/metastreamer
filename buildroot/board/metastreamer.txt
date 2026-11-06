@@ -16,8 +16,9 @@ address=""
 gateway=""
 dns=""
 
-# Power: "full", or "low" when the goggles cannot supply enough current (the Pi crashes or reboots a few
-# seconds after it starts, seen with Goggles Integra): CPU at most 700 MHz, Wi-Fi power saving and 10 dBm.
+# Power: "full"; "low" when the goggles cannot supply enough current (the Pi crashes or reboots a few
+# seconds after it starts, seen with Goggles Integra): CPU at most 700 MHz, Wi-Fi power saving and 10 dBm;
+# "min": "low" with Wi-Fi off, HDMI only (no browser, no SSH: change it back here, on the card).
 power="full"
 
 # Wi-Fi networks, one per line: "name"="password". The first line has the highest priority;

@@ -32,8 +32,10 @@ int conf_net_static(void);
 const char *conf_net_address(void);
 const char *conf_net_gateway(void);
 const char *conf_net_dns(void);
-/* power="low": the Pi draws less (CPU capped here, Wi-Fi power in metastreamer-wifi) */
-int conf_power_low(void);
+/* power: "low" draws less (CPU capped here, Wi-Fi power in metastreamer-wifi), "min" also has no Wi-Fi */
+enum { POWER_FULL, POWER_LOW, POWER_MIN };
+int conf_power(void);
+const char *conf_power_name(void);
 /* validate, save, apply (metastreamer-wifi net). NULL = ok, else the error */
 const char *conf_set_network(int is_static, const char *address, const char *gateway, const char *dns);
 

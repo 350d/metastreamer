@@ -378,16 +378,16 @@ static int duml_console_send(uint8_t dst, uint8_t set, uint8_t id, const uint8_t
     return 0;
 }
 
-/* ---- power: power="low" caps the CPU (the goggles' USB port may not supply a Pi at full speed);
+/* ---- power: power="low" or "min" caps the CPU (the goggles' USB port may not supply a Pi at full speed);
  * the firmware's under-voltage flag (raspberrypi-hwmon, loaded by the init script) is logged and in /status ---- */
 #define CPU_MAX_FREQ "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"
 static char uv_path[64];
 static int uv_now, uv_seen;
 
 static void power_start(void) {
-    if (conf_power_low()) {
+    if (conf_power() != POWER_FULL) {
         FILE *f = fopen(CPU_MAX_FREQ, "w");
-        if (f && fputs("700000", f) >= 0 && fclose(f) == 0) printf("[power] low: CPU at most 700 MHz\n");
+        if (f && fputs("700000", f) >= 0 && fclose(f) == 0) printf("[power] %s: CPU at most 700 MHz\n", conf_power_name());
         else { perror("[power] " CPU_MAX_FREQ); if (f) fclose(f); }
     }
     for (int i = 0; i < 8 && !uv_path[0]; i++) {
@@ -419,7 +419,7 @@ static size_t link_json(char *o, size_t cap) {
                      "\"power\":\"%s\",\"undervoltage\":%s,\"undervoltage_seen\":%s}",
                      registered ? "true" : "false", port_bytes_video, port_bytes_other,
                      goggles_clock[0] ? "\"" : "", goggles_clock[0] ? goggles_clock : "null", goggles_clock[0] ? "\"" : "",
-                     conf_power_low() ? "low" : "full", !uv_path[0] ? "null" : uv_now ? "true" : "false",
+                     conf_power_name(), !uv_path[0] ? "null" : uv_now ? "true" : "false",
                      !uv_path[0] ? "null" : uv_seen ? "true" : "false");
     return n < (int)cap ? (size_t)n : cap - 1;
 }

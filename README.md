@@ -11,13 +11,17 @@ a web page. The whole system is a 90 MB read-only image that shows a picture abo
 
 - **HDMI out**: hardware H.264 decode, zero-copy to a KMS plane, 1920×1080 at 50 Hz by default
 - **Browser**: low-latency fMP4 over Media Source Extensions (~0.2 s), HLS for everything else
-- **Snapshots**: JPEG from the hardware encoder, `/snapshot`
+- **Snapshots**: JPEG from the hardware encoder, `/snapshot`; without a picture a black frame saying
+  `NO GOGGLES` or `NO SIGNAL`
 - **Telemetry**: link quality, goggles battery, air unit recording and storage, connected devices,
   as JSON, server-sent events and HLS metadata
 - **Camera settings** (being tested and reworked, see below): resolution, frame rate, exposure, ISO, shutter,
   EV, white balance, sharpness, noise reduction, colour profile, anti-flicker
 - **Wi-Fi**: networks from one settings file on the SD card or the web page, DHCP or a static address
 - **Clock**: NTP over Wi-Fi, local time zone, and it sets the goggles' clock for correct recording dates
+- **USB**: an Android accessory gadget served through FunctionFS, no tty in the data path; a restart or a
+  replugged cable gives a new session within seconds
+- **Power modes**: `power="full"`, `"low"` or `"min"` (no Wi-Fi) for goggles that cannot supply the Pi
 - **Appliance-style system**: Buildroot, read-only root, hardware watchdog, survives HDMI hot-plug
 
 > metastreamer is an independent project. It is not affiliated with, endorsed by or connected to DJI.
@@ -29,7 +33,7 @@ a web page. The whole system is a 90 MB read-only image that shows a picture abo
 | Goggles | USB product code | Status |
 |---|---|---|
 | DJI Goggles 2 | ZV900 | **Tested** (with the O3 Air Unit) |
-| DJI Goggles Integra | ZV901 | Reported: the Pi crashes a few seconds after start when powered from the goggles; try `power="low"` or a separate supply |
+| DJI Goggles Integra | ZV901 | Reported: the Pi crashes a few seconds after start when powered from the goggles; try `power="low"` or `"min"`, or a separate supply |
 | DJI Goggles 3 | ZV902 | Expected to work: same USB link and protocol |
 | DJI Goggles N3 | ZV300 | Expected to work: same USB link and protocol |
 | DJI FPV Goggles V1 / V2 | — | Not supported: older generation, different link |
@@ -74,7 +78,8 @@ it fast. The binary is about 190 KB, and the whole system uses about 90 MB of th
 - mini-HDMI cable to a display or a capture card (optional)
 - Power: the Pi's PWR port, or from the goggles over the same cable (keep the goggles battery charged:
   below ~25 % the Pi may brown out). Not every pair of goggles supplies enough: random kernel crashes a few
-  seconds after start mean too little current. `power="low"` in `metastreamer.txt` makes the Pi draw less;
+  seconds after start mean too little current. `power="low"` in `metastreamer.txt` makes the Pi draw less (CPU at
+  most 700 MHz, Wi-Fi power saving), `power="min"` less still (no Wi-Fi: HDMI only, set it back on the card);
   `/status` shows `undervoltage` when the firmware sees it. With the Pi on its own supply, the goggles may not
   start the USB session while the Pi feeds 5 V back into the cable: use a cable or adapter without VBUS.
 
@@ -118,7 +123,7 @@ The boot partition (FAT, `METASTREAM`) holds everything you may want to change; 
 
 | File | What it is |
 |---|---|
-| `metastreamer.txt` | All settings, `key="value"`: `country`, `timezone`, `timezone_auto`, `network` (`"dhcp"` or `"static"`), `address`, `gateway`, `dns`, `power` (`"full"` or `"low"`); then the Wi-Fi networks under `[wifi]`, one `"name"="password"` per line, the first one preferred |
+| `metastreamer.txt` | All settings, `key="value"`: `country`, `timezone`, `timezone_auto`, `network` (`"dhcp"` or `"static"`), `address`, `gateway`, `dns`, `power` (`"full"`, `"low"` or `"min"`); then the Wi-Fi networks under `[wifi]`, one `"name"="password"` per line, the first one preferred |
 | `authorized_keys` | Optional: SSH public keys for `root` (there is no password login) |
 | `ssh_host_ed25519_key`, `.pub` | Made on the first boot: the Pi's SSH identity, kept across reboots |
 | `wifi.log` | Written by the Pi: the address it got, or a report when Wi-Fi did not come up (no passwords in it) |

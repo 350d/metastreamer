@@ -107,6 +107,8 @@ report() {
 
 case "$1" in
 start)
+	# power="min": no Wi-Fi at all, the driver is not even loaded (the chip stays without firmware)
+	if [ "$(cfg power)" = min ]; then log 'power="min": Wi-Fi off'; exit 0; fi
 	# the watcher runs on its own, so the log is written even if something below hangs
 	watch &
 	modprobe brcmfmac >>$OUT 2>&1
