@@ -9,15 +9,14 @@
 ```
 
 Try it on a running card without touching the read-only system: stop the running copy and start yours from
-`/tmp`. The goggles need the session restart from [protocol.md](protocol.md#restarting-a-session), which
-`metastreamer-reconnect` does:
+`/tmp`. It takes the USB gadget over from the running copy:
 
 ```bash
 cat src/metastreamer | ssh root@metastreamer 'cat > /tmp/metastreamer && chmod +x /tmp/metastreamer'
 ```
 
 ```bash
-ssh root@metastreamer 'kill $(pgrep -f "S10metastreamer start") $(pidof metastreamer); metastreamer-reconnect; stty -F /dev/ttyGS0 raw -echo; /tmp/metastreamer'
+ssh root@metastreamer 'kill $(ps | grep "[S]10metastreamer start" | cut -c1-6) $(pidof metastreamer); /tmp/metastreamer'
 ```
 
 A reboot brings back the version in the image.
@@ -39,7 +38,8 @@ metastreamer --wifi-conf metastreamer.txt wpa_supplicant.conf
 
 | File | |
 |---|---|
-| `src/metastreamer.c` | serial link, LogicLink/DUML, registration, camera commands, clock, main loop |
+| `src/metastreamer.c` | LogicLink/DUML, registration, camera commands, clock, main loop |
+| `src/usb.c` | the USB gadget: configfs, FunctionFS, endpoint threads, session restart |
 | `src/hls.c` | H.264 → fMP4 (per-frame stream and HLS), HTTP server, pages, API |
 | `src/hdmi.c` | V4L2 hardware decoder, KMS output, JPEG snapshots |
 | `src/telem.c` | telemetry from DUML, `/duml` monitor |

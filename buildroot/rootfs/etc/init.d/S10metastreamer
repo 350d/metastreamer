@@ -1,20 +1,17 @@
 #!/bin/sh
-# USB gadget "phone" + metastreamer, restarted when it exits.
-# On REstart metastreamer-reconnect makes the goggles open a new session (see the script).
+# metastreamer, restarted when it exits. It builds the USB gadget itself (configfs + FunctionFS);
+# the gadget leaves the bus when the process exits and comes back with the next start.
+G=/sys/kernel/config/usb_gadget/metastreamer/UDC
 case "$1" in
 start)
-	/usr/bin/metastreamer-gadget 2>&1 | logger -t metastreamer-gadget
-	if [ -e /dev/ttyGS0 ]; then echo "metastreamer: USB gadget up"; else echo "metastreamer: USB gadget FAILED (logread | grep metastreamer-gadget)"; fi
 	(
-		first=1
 		while true; do
-			[ "$first" = 0 ] && /usr/bin/metastreamer-reconnect
-			first=0
-			stty -F /dev/ttyGS0 raw -echo
 			/usr/bin/metastreamer 2>&1 | logger -t metastreamer
 			sleep 1
 		done
 	) </dev/null >/dev/null 2>&1 &
-	[ -e /dev/ttyGS0 ]   # the boot screen shows a red mark when the gadget did not come up
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do [ -s "$G" ] && break; sleep 0.2; done
+	if [ -s "$G" ]; then echo "metastreamer: USB gadget up"; else echo "metastreamer: USB gadget FAILED (logread | grep metastreamer)"; fi
+	[ -s "$G" ]   # the boot screen shows a red mark when the gadget did not come up
 	;;
 esac

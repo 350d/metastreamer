@@ -16,7 +16,7 @@ endef
 
 define METASTREAMER_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/src/metastreamer $(TARGET_DIR)/usr/bin/metastreamer
-	for f in gadget reconnect wifi ntp-hook; do \
+	for f in wifi ntp-hook; do \
 		$(INSTALL) -D -m 0755 $(@D)/scripts/metastreamer-$$f $(TARGET_DIR)/usr/bin/metastreamer-$$f || exit 1; \
 	done
 endef

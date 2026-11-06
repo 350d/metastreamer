@@ -10,20 +10,22 @@ All multi-byte numbers are little-endian.
 ## USB
 
 The goggles are the USB host and look for an Android device in accessory mode. The Pi's USB controller
-(`dwc2`, `dr_mode=peripheral`) presents one through configfs (`scripts/metastreamer-gadget`):
+(`dwc2`, `dr_mode=peripheral`) presents one through configfs; metastreamer builds the gadget itself
+(`src/usb.c`):
 
 | Field | Value |
 |---|---|
 | idVendor / idProduct | `18d1` / `2d00` (Android Open Accessory) |
 | bDeviceClass / SubClass / Protocol | `ff` / `ff` / `00` |
 | bcdUSB / bcdDevice | `0200` / `0100` |
-| Function | one generic serial function (`gser`), `/dev/ttyGS0` |
+| Function | FunctionFS: one interface, class / subclass `ff` / `ff`, bulk OUT `ep1` and IN `ep2` |
 
 The goggles start talking on their own once they have enumerated the Pi. A Mac or a PC cannot do this: it
 has to be a device, not a host.
 
-`/dev/ttyGS0` must be in raw mode (`stty raw -echo`) and must not be anyone's controlling terminal: the
-stream contains `0x1C`, which a terminal turns into `SIGQUIT`.
+Until 2026-11 the function was the generic serial gadget (`gser`, `/dev/ttyGS0`). A tty echoes what it
+receives until it is put in raw mode, and its line discipline sits in the data path; FunctionFS has neither.
+The gadget leaves the bus when metastreamer exits (its `ep0` closes) and is bound again on the next start.
 
 ## LogicLink framing
 
@@ -80,17 +82,19 @@ If no heartbeat arrives for 10 s, metastreamer exits and the init script restart
 
 ## Restarting a session
 
-If metastreamer restarts while the cable stays in, the goggles keep their old session and never talk to the
-new one. Dropping off the bus fixes it, but only like this (Goggles 2, five tries out of five):
+With the FunctionFS gadget, a restart of metastreamer with the cable in place, or a few seconds off the bus
+(`soft_connect`), gives a new session at once (Goggles 2).
+
+With the old serial gadget the goggles kept their old session and never talked to the new one. Dropping off
+the bus fixed it, but only like this (Goggles 2, five tries out of five):
 
 1. `soft_connect` off for **15 s**
 2. on for **2 s**
 3. off for **3 s**
 4. on
 
-A single off period of 3, 8, 12 or 15 s does not work. `scripts/metastreamer-reconnect` does this before every
-start except the first one after boot; when the cable was pulled (the tty hung up), it only waits for the
-goggles, since a re-plugged cable is a fresh session anyway (about 5 s).
+A single off period of 3, 8, 12 or 15 s did not work. metastreamer still runs this sequence when the goggles
+have enabled it but stay silent for 10 s.
 
 ## Telemetry
 
@@ -144,6 +148,24 @@ our goggles was months off.
 
 metastreamer sends local time (time zone from `metastreamer.txt`) once NTP has synced, reads it back to
 check, and also uses the goggles' date as a fallback system clock when it is newer than the image build time.
+
+## Notes from OpenSquirrel (Goggles 3, not checked on Goggles 2)
+
+[OpenSquirrel](https://github.com/xNuclearSquirrel/OpenSquirrel) (MIT, Pi Zero 2 W, Python) talks to the
+goggles the same way and documents what it found in the Goggles 3 firmware
+([docs/PROTOCOL.md](https://github.com/xNuclearSquirrel/OpenSquirrel/blob/main/docs/PROTOCOL.md)):
+
+- The LogicLink length is a **u32** (bytes 4..7), not a u16 followed by `00 00`.
+- The registration fields are: `17 00` register a V1 app device, `00` add, `23` type 3 / subtype 2, `00`
+  reserved, an 8-byte name (not checked by the video gate) and `02` host ID. This one packet alone, sent
+  once a second, is enough for video. OpenSquirrel neither subscribes to `camcap_common` nor sends the
+  app version.
+- Path inside the goggles: the registration makes `dji_sys` set the DJI Fly "connected" flag, which, with
+  the radio link up, turns on app liveview, which then sends the encoder's stream to `0x574A`.
+- The goggles check the registered app once a second with five retries: they send the `19 00` heartbeat,
+  and each new `0x17` registration resets the counter. When the retries run out, they report the app
+  offline and stop the video. Goggles 3 answer the heartbeat with `1a 00 00 00` (4 bytes; we send 5).
+- The goggles serve one app at a time: DJI Fly on a phone and the bridge cannot both be connected.
 
 ## Research aids
 

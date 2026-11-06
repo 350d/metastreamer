@@ -1,17 +1,17 @@
 /*
  * metastreamer: DJI Goggles 2/3/N3 -> browser and HDMI bridge, for a Raspberry Pi Zero in USB gadget mode.
- * LogicLink/DUML protocol from YStreamer; single-threaded poll() loop (HDMI runs in its own thread).
+ * LogicLink/DUML protocol from YStreamer; single-threaded poll() loop (HDMI and the USB endpoints run in their own
+ * threads, see usb.c).
  *
  * Outputs: http://<pi>/            player page (Safari: per-frame fMP4 via MediaSource, <1 s)
  *          http://<pi>/live.mp4    endless per-frame fMP4 (low latency)
  *          http://<pi>/stream.m3u8 HLS (fallback)
  *          HDMI                    hardware decode, on by default (--no-hdmi turns it off)
  *
- * Run (the tty must be in raw mode; the launch command takes care of that):
- *   sh -c 'exec 3<>/dev/ttyGS0; stty -F /dev/ttyGS0 raw -echo; exec ./metastreamer [--http 80] [--no-hdmi]'
+ * Run as root: it builds the USB gadget itself (configfs + FunctionFS) and puts it on the bus.
+ *   ./metastreamer [--http 80] [--no-hdmi]
  *
- * Build (on the Mac):
- *   zig cc -target arm-linux-musleabihf -mcpu=arm1176jzf_s -O2 -static -s -o metastreamer metastreamer.c hls.c hdmi.c
+ * Build (on the Mac): tools/build-zig.sh
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -33,8 +33,8 @@
 #include "telem.h"
 #include "wifi.h"
 #include "conf.h"
+#include "usb.h"
 
-#define DEV "/dev/ttyGS0"
 #define APP 0x02
 #define FLAGS_REQUEST 0x40
 #define FLAGS_RESPONSE 0x80
@@ -55,7 +55,6 @@
 
 #define BUF_CAP (1024 * 1024)
 
-static int tty = -1;
 static uint8_t buf[BUF_CAP];
 static size_t blen;
 static uint16_t seq = 1;
@@ -115,7 +114,7 @@ static void send_duml(uint8_t dst, uint16_t s, uint8_t flags, uint8_t cmd_set, u
     o += plen;
     uint16_t c = crc16(out + start, o - start);
     out[o++] = c & 0xFF; out[o++] = c >> 8;
-    if (tty >= 0 && write(tty, out, o) < 0) perror("tty write");
+    usb_write(out, o);
 }
 
 static void request(uint8_t dst, uint8_t cmd_id, const uint8_t *p, size_t n) {
@@ -386,12 +385,9 @@ static size_t link_json(char *o, size_t cap) {
     return n < (int)cap ? (size_t)n : cap - 1;
 }
 
-/* The host hung up the tty: the cable was pulled. On replug the goggles see a fresh device,
- * so metastreamer-reconnect must not run its slow off-bus sequence before the next start. */
-static void mark_unplugged(void) {
-    int fd = open("/run/metastreamer.unplugged", O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
-    if (fd >= 0) close(fd);
-}
+static double last_rx;
+/* for the /snapshot placeholder: the goggles are on the link and talking */
+static int goggles_up(void) { return usb_enabled() && now() - last_rx < 3.0; }
 
 int main(int argc, char **argv) {
     /* boot-time helper for metastreamer-wifi: [wifi] in metastreamer.txt -> wpa_supplicant.conf */
@@ -415,60 +411,60 @@ int main(int argc, char **argv) {
     conf_load();
     setvbuf(stdout, NULL, _IOLBF, 0);
 
-    tty = open(DEV, O_RDWR | O_NOCTTY);
-    if (tty < 0) { perror(DEV); return 1; }
+    if (usb_start() < 0) return 1;
     hls_start(http_port);
     hls_set_link_fn(link_json);
+    hls_set_goggles_fn(goggles_up);
     hls_set_camera_fn(cam_set);
     if (duml_console) hls_set_duml_fn(duml_console_send);
     if (hdmi_start(use_hdmi) == 0) hls_set_au_sink(hdmi_feed_au);   /* always decode (for /snapshot), display depends on the flag */
 
     started = now();
-    double last_stats = started, last_rx = started;
+    double last_stats = started;
+    unsigned ep = usb_epoch();
+    last_rx = started;
     for (;;) {
-        struct pollfd p[1 + 24] = {{tty, POLLIN, 0}};
-        int nh = hls_pollfds(p + 1, 24);
-        int r = poll(p, 1 + nh, 250);
+        struct pollfd p[2 + 24] = {{usb_rx_fd(), POLLIN, 0}, {usb_event_fd(), POLLIN, 0}};
+        int nh = hls_pollfds(p + 2, 24);
+        int r = poll(p, 2 + nh, 250);
         if (r < 0 && errno != EINTR) { perror("poll"); break; }
 
-        if (r > 0 && (p[0].revents & (POLLHUP | POLLERR))) {
-            fprintf(stderr, "tty: link to goggles lost (cable pulled?) — exiting, systemd will restart\n");
-            mark_unplugged();
-            return 3;
+        if (r > 0 && (p[1].revents & POLLIN)) usb_events();
+        if (ep != usb_epoch()) {   /* the goggles enabled or dropped us: a new session starts from scratch */
+            ep = usb_epoch();
+            blen = 0; registered = 0; last_rx = now();
         }
         if (r > 0 && (p[0].revents & POLLIN)) {
             if (blen >= BUF_CAP) blen = 0; /* garbage without headers — reset */
-            ssize_t n = read(tty, buf + blen, BUF_CAP - blen);
-            if (n > 0) { blen += (size_t)n; last_rx = now(); process(); }
-            else if (n == 0 || (errno != EINTR && errno != EAGAIN)) {
-                fprintf(stderr, "tty: read error — exiting, systemd will restart\n");
-                mark_unplugged();
-                return 3;
-            }
+            ssize_t n = usb_read(buf + blen, BUF_CAP - blen);
+            if (n > 0 && usb_enabled()) { blen += (size_t)n; last_rx = now(); process(); }
         }
-        if (r > 0) hls_handle(p + 1, nh);
+        if (r > 0) hls_handle(p + 2, nh);
         hls_tick();
         cam_poll();
         clock_poll();
         duml_probe();
 
+        usb_tick();
+
         double t = now();
-        if (t - last_rx > 10.0) {
-            fprintf(stderr, "tty: goggles silent for 10 s — exiting, systemd will restart with a reconnect\n");
-            return 4;
+        if (usb_enabled() && !usb_restarting() && t - last_rx > 10.0) {
+            fprintf(stderr, "[usb] goggles silent for 10 s\n");
+            usb_restart_session();
+            last_rx = t;
         }
         int alive = registered && (t - last_hb < 5.0);
-        if (!alive && t - last_reg >= 1.0) {
+        if (!alive && usb_enabled() && t - last_reg >= 1.0) {
             if (registered) registered = 0;
             do_register();
             last_reg = t;
         }
         if (t - last_stats >= 5.0) {
-            char hs[256], ds[160];
-            hls_stats(hs, sizeof(hs)); hdmi_stats(ds, sizeof(ds));
-            printf("[fwd] reg=%d video=%.1fMB ~%.0fKB/s ports video=%llu other=%llu | %s | %s\n",
+            char hs[256], ds[160], us[96];
+            hls_stats(hs, sizeof(hs)); hdmi_stats(ds, sizeof(ds)); usb_stats(us, sizeof(us));
+            printf("[fwd] reg=%d video=%.1fMB ~%.0fKB/s ports video=%llu other=%llu | %s | %s | %s\n",
                    registered, vbytes / 1048576.0, vbytes / (t - started) / 1024.0,
-                   port_bytes_video, port_bytes_other, hs, ds);
+                   port_bytes_video, port_bytes_other, us, hs, ds);
             last_stats = t;
         }
     }

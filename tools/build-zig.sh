@@ -5,5 +5,5 @@ set -e
 cd "$(dirname "$0")/../src"
 python3 gen_html.py web/settings.html SETTINGS_HTML settings_html.h
 zig cc -target arm-linux-musleabihf -mcpu=arm1176jzf_s -O2 -Wall -Wextra -static -s \
-    -o metastreamer metastreamer.c hls.c hdmi.c telem.c wifi.c conf.c
+    -o metastreamer metastreamer.c hls.c hdmi.c telem.c wifi.c conf.c usb.c
 ls -la metastreamer

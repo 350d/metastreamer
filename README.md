@@ -60,7 +60,7 @@ Measured on a Raspberry Pi Zero W with Goggles 2 and an O3 Air Unit, from power-
 | Browser, low-latency stream (`/live.mp4`, Safari) | ~0.2 s (estimated by eye) |
 | Browser, HLS | 2–3 s |
 | Goggles USB cable unplugged and plugged back in | ~5 s |
-| metastreamer restarted with the cable in place | ~28 s (the goggles need 15 s off the bus, see [protocol](docs/protocol.md#restarting-a-session)) |
+| metastreamer restarted with the cable in place | a few seconds (see [protocol](docs/protocol.md#restarting-a-session)) |
 
 The same software on DietPi with systemd took 16.6 s to the first picture; the Buildroot image is what makes
 it fast. The binary is about 190 KB, and the whole system uses about 90 MB of the Pi Zero's RAM.
@@ -130,7 +130,7 @@ A wrong static address makes the Pi unreachable over Wi-Fi: set `network="dhcp"`
 | `/settings` | Control page |
 | `/live.mp4` | Endless fMP4, one fragment per frame, for Media Source Extensions |
 | `/stream.m3u8` | HLS (fMP4 segments of one GOP, telemetry in `EXT-X-DATERANGE`) |
-| `/snapshot` | Current frame as JPEG |
+| `/snapshot` | Current frame as JPEG. Without a picture: a black frame saying `NO GOGGLES` or `NO SIGNAL`, with status 503 |
 | `/status` | JSON: link, video, telemetry, camera, HDMI |
 | `/events` | The same as server-sent events, 4 per second |
 | `/duml` | Every DUML message type seen from the goggles, for research |
@@ -159,13 +159,13 @@ For working on the code without rebuilding the image, see [docs/development.md](
 ## How it works
 
 ```
- goggles ──USB (Android accessory, serial)──► metastreamer ──► HDMI   (V4L2 H.264 decoder → KMS plane)
+ goggles ──USB (Android accessory, bulk)───► metastreamer ──► HDMI   (V4L2 H.264 decoder → KMS plane)
                                                     │
                                                     ├──► browser (fMP4 / HLS, JSON, settings page)
                                                     └──► camera settings and clock back to the goggles (DUML)
 ```
 
-The Pi presents itself as an Android accessory (`18d1:2d00`) with one bulk serial function. Over it the
+The Pi presents itself as an Android accessory (`18d1:2d00`) with one bulk interface (FunctionFS). Over it the
 goggles speak DJI's LogicLink framing, with the video on its own ports and DUML messages for everything else.
 metastreamer registers like the DJI Fly app, answers the heartbeats, and repackages the H.264 stream without
 transcoding. The details are in [docs/protocol.md](docs/protocol.md).
@@ -174,7 +174,7 @@ transcoding. The details are in [docs/protocol.md](docs/protocol.md).
 
 ```
 src/            metastreamer itself (C): USB link, fMP4/HLS and HTTP server, HDMI, telemetry, settings page
-scripts/        USB gadget, session restart, Wi-Fi, NTP hook (installed to /usr/bin)
+scripts/        Wi-Fi, NTP hook (installed to /usr/bin)
 buildroot/      Buildroot external tree: defconfig, board files, init scripts, the metastreamer package
 docker/         build environment for the image
 contrib/        systemd units for Raspberry Pi OS / DietPi

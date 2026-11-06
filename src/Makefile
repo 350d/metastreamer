@@ -4,7 +4,7 @@ CC ?= cc
 CFLAGS ?= -O2
 CFLAGS += -Wall -Wextra -std=gnu11
 LDLIBS += -lpthread
-OBJS = metastreamer.o hls.o hdmi.o telem.o wifi.o conf.o
+OBJS = metastreamer.o hls.o hdmi.o telem.o wifi.o conf.o usb.o
 
 all: metastreamer
 

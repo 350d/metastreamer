@@ -17,6 +17,7 @@
 #include "wifi.h"
 #include "conf.h"
 #include "settings_html.h"
+#include "placeholder_jpg.h"
 
 #include <errno.h>
 #include <math.h>
@@ -170,6 +171,8 @@ void hls_set_au_sink(au_sink_fn f) { au_sink = f; }
 static json_fn link_fn;
 static double t_start;
 void hls_set_link_fn(json_fn f) { link_fn = f; }
+static state_fn goggles_fn;
+void hls_set_goggles_fn(state_fn f) { goggles_fn = f; }
 static set_fn cam_fn;
 void hls_set_camera_fn(set_fn f) { cam_fn = f; }
 static duml_fn duml_send_fn;
@@ -502,6 +505,13 @@ void hls_start(int port) {
     printf("[hls] http://<pi-ip>:%d/\n", port);
 }
 
+static void respond(Conn *c, int code, const char *type, const uint8_t *body, size_t blen);
+/* No picture from the goggles: a black frame with a message, still a JPEG, but 503 so that scripts can tell */
+static void placeholder(Conn *c) {
+    if (goggles_fn && goggles_fn()) respond(c, 503, "image/jpeg", PLACEHOLDER_NO_VIDEO, sizeof(PLACEHOLDER_NO_VIDEO));
+    else respond(c, 503, "image/jpeg", PLACEHOLDER_NO_GOGGLES, sizeof(PLACEHOLDER_NO_GOGGLES));
+}
+
 static void respond(Conn *c, int code, const char *type, const uint8_t *body, size_t blen) {
     size_t from = 0, to = blen ? blen - 1 : 0; int partial = 0;
     const char *rg = strstr(c->in, "Range: bytes=");
@@ -676,7 +686,7 @@ static void handle_request(Conn *c) {
         c->duml_wait = 1; c->duml_since = telem_raw_seq(); c->duml_src = (uint8_t)dst; c->duml_t0 = mono();
         c->duml_for = wait < 0.1 ? 0.1 : wait > 5 ? 5 : wait;
     } else if (!strcmp(path, "/snapshot") || !strcmp(path, "/snapshot.jpg")) {
-        if (!hdmi_decoder_running()) { respond(c, 503, "text/plain", (const uint8_t *)"no decoder\n", 11); return; }
+        if (!hdmi_decoder_running() || !last_feed || mono() - last_feed > 1.0) { placeholder(c); return; }
         size_t n; unsigned sq; double age;
         const uint8_t *j = hdmi_snapshot_lock(&n, &sq, &age);
         if (n && age < 0.15) { respond(c, 200, "image/jpeg", j, n); hdmi_snapshot_unlock(); return; }
@@ -816,7 +826,7 @@ void hls_tick(void) {
         if (n && sq != c->snap_seq0) { c->snap_wait = 0; respond(c, 200, "image/jpeg", j, n); }
         hdmi_snapshot_unlock();
         if (c->snap_wait && t - c->snap_t0 > SNAP_TIMEOUT) {
-            c->snap_wait = 0; respond(c, 504, "text/plain", (const uint8_t *)"no frame\n", 9);
+            c->snap_wait = 0; placeholder(c);
         }
     }
 }
