@@ -6,3 +6,4 @@ src/settings_html.h
 # per-checkout secrets: SSH host key, public keys baked into the image
 buildroot/local/
 .DS_Store
+/font-work/

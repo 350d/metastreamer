@@ -45,6 +45,7 @@ metastreamer --wifi-conf metastreamer.txt wpa_supplicant.conf
 | `src/screen.c` | the status screen (HDMI under the video, `/snapshot` without video); `src/jpeg.c` encodes it |
 | `src/splash.c` | `metastreamer --splash`: the same screen as the boot screen on the console framebuffer, started by `rcS` |
 | `src/ui_assets.h` | its font, icons and animations, made from `assets/` by `tools/gen-ui.py` (any TTF/OTF; needs Pillow, fontTools, numpy; kept in git) |
+| `tools/font/` | the UI font, rebuilt from the original pixel atlas (`atlas.png`, 46x42 cells, 40 ppem): `build_font.py` traces each cell with potrace (the upscaled cell corrected by back-projection to reproduce the atlas coverage), straightens the straight edges, gives the inner corners one standard radius, then sets optical side bearings and kerning (`space_optical.py`); metrics and names from `djiosd-traced.ttf`. `score3.py` measures the outlines against the atlas: 0.24 % mean coverage error beyond the atlas' 15-level quantization |
 | `src/telem.c` | telemetry from DUML, `/duml` monitor |
 | `src/wifi.c` | Wi-Fi: `wpa_supplicant` config, `/api/wifi`, `/api/net` |
 | `src/conf.c` | `metastreamer.txt`: all settings, read and written in one place |

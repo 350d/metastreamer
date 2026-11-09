@@ -5,7 +5,8 @@ Glyphs (8-bit coverage) and icons (RGBA) are run-length encoded: a count byte (1
 (1 byte for glyphs, 4 for icons).
 
 Any TrueType/OpenType font works: the one .ttf/.otf in assets/ or the one given. Glyphs are drawn from the
-outlines (embedded bitmap strikes are dropped), kerning is measured pair by pair with the font's own layout
+outlines (embedded bitmap strikes are dropped) at 8x the size and scaled down by area averaging: the exact shape,
+no hinting (FreeType's auto-hinter snaps the bars of E, H, ... to the pixel grid unevenly at small sizes). Kerning is measured pair by pair with the font's own layout
 (HarfBuzz through Pillow's raqm: 'kern' table and GPOS alike).
 Needs Pillow (with raqm for kerning), fontTools and numpy, so the header is kept in git and the build does not run
 this: run it after changing anything in assets/.
@@ -77,22 +78,26 @@ if not RAQM:
     print("warning: Pillow without raqm, no kerning", file=sys.stderr)
 print("font:", os.path.basename(FONT), tt["name"].getDebugName(4))
 
+SS = 8   # supersampling
 for fname, size in FONTS.items():
     font = ImageFont.truetype(io.BytesIO(FONT_DATA), size)
+    big = ImageFont.truetype(io.BytesIO(FONT_DATA), size * SS)
     lay = ImageFont.truetype(io.BytesIO(FONT_DATA), size, layout_engine=ImageFont.Layout.RAQM) if RAQM else None
     ascent, descent = font.getmetrics()
     glyphs = []
     for c in range(FIRST, LAST + 1):
         ch = chr(c)
-        adv = round(font.getlength(ch))
-        box = font.getbbox(ch, anchor="ls")
+        adv = round(big.getlength(ch) / SS)
+        b8 = big.getbbox(ch, anchor="ls")
+        box = (b8[0] // SS, b8[1] // SS, -(-b8[2] // SS), -(-b8[3] // SS))   # whole pixels around it
         w, h = box[2] - box[0], box[3] - box[1]
         name = "font_%s_%d" % (fname.lower(), c)
-        if w <= 0 or h <= 0:
+        if b8[2] <= b8[0] or b8[3] <= b8[1]:
             glyphs.append("{0, 0, 0, 0, 0, %d}" % adv)
             continue
-        img = Image.new("L", (w, h), 0)
-        ImageDraw.Draw(img).text((-box[0], -box[1]), ch, fill=255, font=font, anchor="ls")
+        img = Image.new("L", (w * SS, h * SS), 0)
+        ImageDraw.Draw(img).text((-box[0] * SS, -box[1] * SS), ch, fill=255, font=big, anchor="ls")
+        img = img.resize((w, h), Image.BOX)
         array(name, rle([(v,) for v in img.tobytes()], 1))
         glyphs.append("{%s, %d, %d, %d, %d, %d}" % (name, w, h, box[0], box[1], adv))
     kern = []
