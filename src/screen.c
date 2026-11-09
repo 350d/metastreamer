@@ -177,12 +177,11 @@ static void draw(const ScreenState *s) {
         text(&UI_FONT_SMALL, tx, by, m, RED);
     }
     else {
-        char ssid[sizeof(s->ssid)], url[32];
+        char ssid[sizeof(s->ssid)];
         snprintf(ssid, sizeof(ssid), "%s", s->ssid);
         for (char *c = ssid; *c; c++) if ((unsigned char)*c < 32 || (unsigned char)*c > 126) *c = '?';
-        snprintf(url, sizeof(url), "http://%s", s->ip);
         tx = text(&UI_FONT_SMALL, tx, by, ssid, WHITE);
-        text(&UI_FONT_SMALL, tx + 32, by, url, GREY);
+        text(&UI_FONT_SMALL, tx + 32, by, s->ip, GREY);
     }
     text(&UI_FONT_SMALL, SCREEN_W - 60 - text_w(&UI_FONT_SMALL, "METASTREAMER"), by, "METASTREAMER", DARK);
 }
