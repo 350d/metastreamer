@@ -6,8 +6,9 @@ CONFIG_VFAT_FS=y
 CONFIG_NLS_CP437=y
 CONFIG_NLS_ISO8859_1=y
 CONFIG_CONFIGFS_FS=y
-# USB gadget (Android accessory + generic serial)
-CONFIG_USB_DWC2=y
+# USB gadget (Android accessory + generic serial). The controller driver is a module, loaded by rcS in the
+# background: its probe waits ~0.5 s for the firmware to power USB up, and built in, the display waited with it
+CONFIG_USB_DWC2=m
 CONFIG_USB_GADGET=y
 CONFIG_USB_LIBCOMPOSITE=y
 CONFIG_USB_CONFIGFS=y
@@ -35,5 +36,20 @@ CONFIG_BCM2835_WDT=y
 # unneeded at boot
 CONFIG_LOGO=n
 CONFIG_BT=n
+# no kernel tracing: registering the tracers took 1.7 s of the boot on the Pi Zero (init_blk_tracer, initcall_debug),
+# before the display came up; and every kernel function carries an mcount call
+CONFIG_FTRACE=n
+CONFIG_KPROBES=n
+# not used: the legacy USB driver (dwc2 is), network file systems, software RAID
+CONFIG_USB_DWCOTG=n
+CONFIG_NFS_FS=n
+CONFIG_NFSD=n
+CONFIG_MD=n
+# Wi-Fi: the regulatory database is read without checking its signature and without the built-in keys
+# (both are forced on unless CFG80211_CERTIFICATION_ONUS, which needs EXPERT)
+CONFIG_EXPERT=y
+CONFIG_CFG80211_CERTIFICATION_ONUS=y
+CONFIG_CFG80211_REQUIRE_SIGNED_REGDB=n
+CONFIG_CFG80211_USE_KERNEL_REGDB_KEYS=n
 # modules uncompressed: kmod in the image is built without xz, compressed .ko.xz would not load (Wi-Fi!)
 # CONFIG_MODULE_COMPRESS is not set

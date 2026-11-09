@@ -434,7 +434,7 @@ static double last_rx;
 static void screen_poll(void) {
     static double last, wifi_t;
     static int wifi, level;
-    static char ssid[33], ip[16];
+    static char ssid[33], ip[16], err[64];
     double t = now();
     if (t - last < 0.25 || t - last_video < 1.0) return;   /* video on screen: nothing to draw */
     last = t;
@@ -443,7 +443,18 @@ static void screen_poll(void) {
         int sig;
         wifi_t = t;
         wifi_status(ssid, sizeof(ssid), &sig, ip, sizeof(ip));
-        wifi = ip[0] ? WIFI_CONNECTED : WIFI_SEARCHING;
+        wifi = ip[0] && ssid[0] ? WIFI_CONNECTED : WIFI_SEARCHING;   /* a static address stays without the link */
+        err[0] = 0;
+        FILE *f = wifi == WIFI_CONNECTED ? NULL : fopen("/run/wifi.state", "r");   /* metastreamer-wifi: why not */
+        if (f) {
+            char l[96] = "";
+            if (fgets(l, sizeof(l), f) && !strncmp(l, "error ", 6)) {
+                l[strcspn(l, "\r\n")] = 0;
+                snprintf(err, sizeof(err), "%s", l + 6);
+                wifi = WIFI_ERROR;
+            }
+            fclose(f);
+        }
         level = !sig ? 2 : sig >= -55 ? 3 : sig >= -67 ? 2 : sig >= -78 ? 1 : 0;
     }
     ScreenState s;
@@ -455,6 +466,7 @@ static void screen_poll(void) {
             : telem_link_quality() <= 0 ? STAGE_AIR_UNIT : STAGE_VIDEO;
     s.wifi = wifi; s.wifi_level = level;
     if (wifi == WIFI_CONNECTED) { memcpy(s.ssid, ssid, sizeof(ssid)); memcpy(s.ip, ip, sizeof(ip)); }
+    if (wifi == WIFI_ERROR) memcpy(s.wifi_error, err, sizeof(err));
     s.undervoltage = uv_now ? 2 : uv_seen ? 1 : 0;
     screen_update(&s);
 }

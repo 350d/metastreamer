@@ -171,6 +171,23 @@ icon("warning_red", load("warning_red", 1.5))
 for n in range(4):
     icon("wifi%d" % n, load("wifi%d" % n))
 off = load("wifi0")
+# Wi-Fi failed: the empty-bars icon with the disc turned red
+def to_red(img):
+    import colorsys
+    out = []
+    px = img.tobytes()
+    for k in range(0, len(px), 4):
+        r, g, b, a = px[k:k + 4]
+        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        if s > 0.3:
+            r, g, b = (round(c * 255) for c in colorsys.hsv_to_rgb(0.993, s * 0.86, v))
+        out.append((r, g, b, a))
+    red = Image.new("RGBA", img.size)
+    red.putdata(out)
+    return red
+
+
+icon("wifi_error", to_red(load("wifi0")))
 icon("wifi_off", Image.merge("RGBA", (*[off.convert("L").point(lambda v: v * 0.45)] * 3, off.getchannel("A"))))
 # Wi-Fi connecting: assets/wifi_0.png, wifi_1.png, ... (no bar lit, one, two, ...), played forth and back
 search = []

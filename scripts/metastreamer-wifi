@@ -3,11 +3,13 @@
 # the networks in its [wifi] section, the address settings (network, address, gateway, dns) above it.
 #   metastreamer-wifi start    at boot: load the driver, build the config, connect;
 #                     then wifi.log on the card: the address, or after 60 s a report (no passwords in it);
-#                     time from NTP as soon as there is an address
+#                     time from NTP as soon as there is an address;
+#                     why it is not connected (wrong password, network not found, ...) in /run/wifi.state
 #   metastreamer-wifi reload   after /settings saved the networks: re-read the config,
 #                     new DHCP lease if the bridge moved to another network
 #   metastreamer-wifi net      after /settings changed the address: DHCP or static
 CONFIG=/boot/metastreamer.txt
+STATE=/run/wifi.state
 CONF=/run/wpa_supplicant.conf
 WPA_PID=/run/wpa_supplicant.pid
 DHCP_PID=/run/udhcpc.wlan0.pid
@@ -72,11 +74,42 @@ ntp() {
 	ntpd -S /usr/bin/metastreamer-ntp-hook -p 0.pool.ntp.org -p 1.pool.ntp.org -p time.cloudflare.com && log "ntpd started"
 }
 
+# why there is no connection, for the status screen: /run/wifi.state is "ok" or "error REASON"
+state() { [ "$(cat $STATE 2>/dev/null)" = "$*" ] || echo "$*" > $STATE; }
+# the network names in metastreamer.txt (the [wifi] section, name=password: only the name)
+names() { sed -n '/^[[:space:]]*\[wifi\]/,/^[[:space:]]*\[/{/^[[:space:]]*\[/d;/=/{s/=.*//;s/^[[:space:]]*//;s/[[:space:]]*$//;p}}' $CONFIG 2>/dev/null | tr -d '\r'; }
+diagnose() {   # $1: seconds without a connection
+	if [ ! -e /sys/class/net/wlan0 ]; then state "error WI-FI ADAPTER NOT FOUND"; return; fi
+	if [ "$(grep -c '^network=' $CONF 2>/dev/null)" = 0 ]; then state "error NO WI-FI NETWORK IN METASTREAMER.TXT"; return; fi
+	w=$(grep -E "reason=WRONG_KEY|pre-shared key may be incorrect" /run/wpa_supplicant.log 2>/dev/null | tail -1)
+	if [ -n "$w" ]; then
+		n=$(echo "$w" | sed -n 's/.* ssid="\([^"]*\)".*/\1/p')
+		state "error WRONG PASSWORD${n:+ FOR $n}"; return
+	fi
+	if iw dev wlan0 link 2>/dev/null | grep -q "^Connected"; then
+		[ "$1" -ge 8 ] && state "error NO ADDRESS FROM THE NETWORK"; return
+	fi
+	if [ "$1" -ge 12 ]; then
+		n=$(names)
+		if [ "$(echo "$n" | grep -c .)" = 1 ]; then state "error NETWORK $n NOT FOUND"; else state "error NO SAVED NETWORK IN RANGE"; fi
+	fi
+}
+
+# runs for as long as the system: wifi.log once (connected, or the report after 60 s), NTP once there is an
+# address, and the state for the status screen
 watch() {
-	for i in $(seq 1 60); do has_ip && break; sleep 1; done
-	if has_ip; then connected; else report; fi
-	while ! has_ip; do sleep 5; done
-	ntp
+	i=0; logged=
+	while true; do
+		if has_ip; then
+			[ -z "$logged" ] && { connected; logged=1; }
+			ntp; state ok; i=0
+			sleep 5; continue
+		fi
+		i=$((i + 1))
+		[ $i -ge 3 ] && diagnose $i
+		[ $i = 60 ] && [ -z "$logged" ] && { report; logged=1; }
+		sleep 1
+	done
 }
 
 report() {

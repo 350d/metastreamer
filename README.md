@@ -7,7 +7,7 @@
 METASTREAMER turns a Raspberry Pi Zero W into the "phone" the goggles expect on their USB port. The goggles
 stream the live H.264 video and telemetry to it; the Pi shows the video on HDMI with the hardware decoder,
 serves it to browsers with about 0.2 s of latency, and lets you change the air unit's camera settings from
-a web page. The whole system is a 90 MB read-only image that shows a picture about 6 s after power-on.
+a web page. The whole system is a 90 MB read-only image that lights up HDMI about 2.5 s after power-on.
 
 - **HDMI out**: hardware H.264 decode, zero-copy to a KMS plane, 1920×1080 at 60 Hz by default (the goggles stream 60 or 30 fps)
 - **Browser**: low-latency fMP4 over Media Source Extensions (~0.2 s), HLS for everything else
@@ -58,7 +58,8 @@ Measured on a Raspberry Pi Zero W with Goggles 2 and an O3 Air Unit, from power-
 
 | Event | Time |
 |---|---|
-| HDMI output, 1920×1080 at 60 Hz | ~3 s |
+| HDMI output, 1920×1080 at 60 Hz (the boot screen) | ~2.5 s |
+| Goggles see the Pi on USB | ~4 s |
 | Goggles registered, video on HDMI and in the browser | ~6 s |
 | Wi-Fi connected, DHCP | 8.3–9.5 s |
 | Wi-Fi connected, static address | ~7.8 s |

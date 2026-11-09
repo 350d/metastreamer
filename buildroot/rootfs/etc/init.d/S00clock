@@ -3,7 +3,8 @@
 # Later the goggles' clock (if newer) and then NTP over Wi-Fi correct it.
 case "$1" in
 start)
-	b=$(cat /etc/build-time 2>/dev/null)
-	[ -n "$b" ] && [ "$(date +%s)" -lt "$b" ] && date -u -s "@$b" >/dev/null
+	# no clock at boot: always behind the build time. read is a shell builtin: date is the only process here
+	read b < /etc/build-time 2>/dev/null
+	[ -n "$b" ] && date -u -s "@$b" >/dev/null
 	;;
 esac

@@ -52,12 +52,19 @@ metastreamer --wifi-conf metastreamer.txt wpa_supplicant.conf
 
 ## The image
 
-- Buildroot 2026.02 LTS, musl, BusyBox init, Raspberry Pi kernel 6.12 (`bcmrpi` + `buildroot/board/linux.fragment`)
+- Buildroot 2026.02 LTS, musl, BusyBox init, Raspberry Pi kernel 6.12 (`bcmrpi` + `buildroot/board/linux.fragment`:
+  no tracing, which alone took 1.7 s of the boot; the USB controller driver `dwc2` as a module, loaded in the
+  background by `/etc/inittab`, so the display does not wait the ~0.5 s the firmware takes to power USB up).
+  HDMI comes up 0.45 s into the kernel, the goggles see the Pi at 1.75 s (`dmesg`)
 - Root file system: squashfs (LZ4), read-only; `/run` and `/tmp` in RAM; the boot partition is mounted read-only
   and remounted for a moment when the control page saves something
-- Init scripts in `buildroot/rootfs/etc/init.d`: `S10metastreamer` starts the gadget and keeps metastreamer
+- Init scripts in `buildroot/rootfs/etc/init.d`: `S02metastreamer` (right after syslogd) starts the gadget and keeps metastreamer
   running, `S30wifi` brings Wi-Fi up in the background, so the HDMI picture never waits for the network
-- `rcS` draws the boot progress on the console; the scripts' own output goes to `/run/boot.log`
+- `rcS` starts the boot screen (`metastreamer --splash`); the scripts' own output, with the uptime each one
+  started at, goes to `/run/boot.log`. Measuring the kernel: `initcall_debug` in `cmdline.txt`
+- One HDMI signal from power-on: the firmware leaves HDMI alone (`hdmi_ignore_hotplug=1`), the console starts in
+  the mode metastreamer uses (`video=` in `cmdline.txt`), and metastreamer takes it over without a modeset
+- `/run/wifi.state`: `ok`, or `error` and why Wi-Fi is not connected (shown on the status screen)
 
 Useful on a running card: `logread` is not there, use `/var/log/messages`, `/run/boot.log`,
 `/run/wpa_supplicant.log` and `/run/wifi.out`.

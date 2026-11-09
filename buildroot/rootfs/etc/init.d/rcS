@@ -2,7 +2,8 @@
 # Start all init scripts in /etc/init.d in numerical order. The boot screen is metastreamer --splash on the
 # console framebuffer (the same look as the status screen that follows): it reads the progress from
 # /run/boot.step ("DONE TOTAL WHAT"), and metastreamer stops it when it takes the display.
-# The scripts' own output goes to /run/boot.log, a failed script is marked there with FAILED.
+# The scripts' own output goes to /run/boot.log, with the uptime each one started at; a failed script is marked
+# there with FAILED. The USB controller driver is loaded in the background by inittab, before this script.
 
 LOG=/run/boot.log
 STEP=/run/boot.step
@@ -33,7 +34,8 @@ echo $! > /run/splash.pid
 for i in "$@"; do
 	[ -f "$i" ] || continue   # dangling symlink
 	echo "$done $total $(label "$i")" > $STEP
-	echo "=== $i" >> $LOG
+	read up rest < /proc/uptime   # a shell builtin: no process
+	echo "=== $up $i" >> $LOG
 	case "$i" in
 		*.sh) ( trap - INT QUIT TSTP; set start; . "$i" ) >> $LOG 2>&1 ;;
 		*) "$i" start >> $LOG 2>&1 ;;
@@ -42,3 +44,5 @@ for i in "$@"; do
 	done=$((done + 1))
 done
 echo "$done $total READY" > $STEP
+read up rest < /proc/uptime
+echo "=== $up done" >> $LOG

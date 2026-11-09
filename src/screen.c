@@ -162,7 +162,7 @@ static void draw(const ScreenState *s) {
 
     /* bottom line: Wi-Fi and the address of the web page; the name on the right */
     static const UiIcon *const bars[4] = {&UI_ICON_WIFI0, &UI_ICON_WIFI1, &UI_ICON_WIFI2, &UI_ICON_WIFI3};
-    const UiIcon *wi = s->wifi == WIFI_OFF ? &UI_ICON_WIFI_OFF
+    const UiIcon *wi = s->wifi == WIFI_OFF ? &UI_ICON_WIFI_OFF : s->wifi == WIFI_ERROR ? &UI_ICON_WIFI_ERROR
                      : s->wifi == WIFI_SEARCHING ? anims[ANIM_WIFI].seq[0] : bars[s->wifi_level & 3];
     const int by = 1010;
     icon(wi, 60, by - 34);
@@ -170,6 +170,12 @@ static void draw(const ScreenState *s) {
     int tx = 60 + wi->w + 20;
     if (s->wifi == WIFI_OFF) text(&UI_FONT_SMALL, tx, by, "WI-FI OFF", GREY);
     else if (s->wifi == WIFI_SEARCHING) text(&UI_FONT_SMALL, tx, by, "WI-FI: CONNECTING", GREY);
+    else if (s->wifi == WIFI_ERROR) {
+        char m[sizeof(s->wifi_error) + 8];
+        snprintf(m, sizeof(m), "WI-FI: %s", s->wifi_error);
+        for (char *c = m; *c; c++) if ((unsigned char)*c < 32 || (unsigned char)*c > 126) *c = '?';
+        text(&UI_FONT_SMALL, tx, by, m, RED);
+    }
     else {
         char ssid[sizeof(s->ssid)], url[32];
         snprintf(ssid, sizeof(ssid), "%s", s->ssid);

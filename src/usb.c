@@ -159,13 +159,13 @@ static int write_descriptors(void) {
 }
 
 static int bind_udc(void) {
-    for (int i = 0; i < 50 && !udc[0]; i++) {
+    for (int i = 0; i < 500 && !udc[0]; i++) {   /* up to 10 s: the dwc2 module is loaded in parallel at boot */
         DIR *d = opendir(UDC_DIR);
         struct dirent *e;
         while (d && (e = readdir(d)))
             if (e->d_name[0] != '.') { snprintf(udc, sizeof(udc), "%s", e->d_name); break; }
         if (d) closedir(d);
-        if (!udc[0]) usleep(200000);
+        if (!udc[0]) usleep(20000);
     }
     if (!udc[0]) { fprintf(stderr, "[usb] no USB device controller (dtoverlay=dwc2,dr_mode=peripheral?)\n"); return -1; }
     return putf("UDC", udc);

@@ -9,7 +9,7 @@
 
 /* how far the bridge got: each stage needs the ones before it (on screen, the boot comes first: SYSTEM) */
 enum { STAGE_USB, STAGE_GOGGLES, STAGE_AIR_UNIT, STAGE_VIDEO };
-enum { WIFI_OFF, WIFI_SEARCHING, WIFI_CONNECTED };
+enum { WIFI_OFF, WIFI_SEARCHING, WIFI_CONNECTED, WIFI_ERROR };
 
 typedef struct {
     int stage;          /* the step being waited for */
@@ -17,6 +17,7 @@ typedef struct {
     int wifi;           /* WIFI_* */
     int wifi_level;     /* 0..3 */
     char ssid[33], ip[16];
+    char wifi_error[64];   /* WIFI_ERROR: why (from metastreamer-wifi) */
     int undervoltage;   /* 0 never, 1 earlier, 2 now */
     int starting;       /* the system is still booting (the splash): title STARTING */
     char boot_step[40]; /* ... and what it is doing */

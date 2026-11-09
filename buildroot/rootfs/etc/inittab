@@ -1,0 +1,14 @@
+# BusyBox init. Boot as few processes as possible before rcS: each one costs a few tens of ms on the Pi Zero
+# (no swap; /proc is mounted by mount -a from fstab; no /dev/fd and /dev/std* links, nothing here uses them).
+::sysinit:/bin/mkdir -p /dev/pts /dev/shm
+::sysinit:/bin/mount -a
+# the USB controller driver, in the background: its probe waits ~0.5 s for the firmware to power USB up
+::sysinit:/sbin/modprobe dwc2 &
+::sysinit:/bin/hostname -F /etc/hostname
+::sysinit:/etc/init.d/rcS
+
+# serial console
+ttyAMA0::respawn:/sbin/getty -L  ttyAMA0 0 vt100
+
+::shutdown:/etc/init.d/rcK
+::shutdown:/bin/umount -a -r
