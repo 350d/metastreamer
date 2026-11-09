@@ -2,6 +2,8 @@
 
 **Live video from DJI FPV goggles on any HDMI screen and in the browser, from a $15 Raspberry Pi Zero W.**
 
+## HDMI in ~2.5 s · goggles connected in ~4 s · ready for video in ~5 s from power-on
+
 <img width="1280" height="960" alt="2026-10-12 16 10 05" src="https://github.com/user-attachments/assets/1186f50b-d468-483b-a753-c8a305671cf0" />
 
 METASTREAMER turns a Raspberry Pi Zero W into the "phone" the goggles expect on their USB port. The goggles
@@ -60,8 +62,8 @@ Measured on a Raspberry Pi Zero W with Goggles 2 and an O3 Air Unit, from power-
 |---|---|
 | HDMI output, 1920×1080 at 60 Hz (the boot screen) | ~2.5 s |
 | Goggles see the Pi on USB | ~4 s |
-| Goggles registered, video on HDMI and in the browser | ~6 s |
-| Wi-Fi connected, DHCP | 8.3–9.5 s |
+| Goggles registered: video as soon as the air unit is linked | ~5 s |
+| Wi-Fi connected (static address) | ~6 s |
 | Wi-Fi connected, static address | ~7.8 s |
 | Clock synced over NTP, goggles' clock set | ~1 s after Wi-Fi |
 
