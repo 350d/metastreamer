@@ -13,6 +13,6 @@ start)
 	) </dev/null >/dev/null 2>&1 &
 	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do [ -s "$G" ] && break; sleep 0.2; done
 	if [ -s "$G" ]; then echo "metastreamer: USB gadget up"; else echo "metastreamer: USB gadget FAILED (logread | grep metastreamer)"; fi
-	[ -s "$G" ]   # the boot screen shows a red mark when the gadget did not come up
+	[ -s "$G" ]   # rcS marks the script FAILED in /run/boot.log when the gadget did not come up
 	;;
 esac

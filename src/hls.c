@@ -17,7 +17,7 @@
 #include "wifi.h"
 #include "conf.h"
 #include "settings_html.h"
-#include "placeholder_jpg.h"
+#include "screen.h"
 
 #include <errno.h>
 #include <math.h>
@@ -171,8 +171,6 @@ void hls_set_au_sink(au_sink_fn f) { au_sink = f; }
 static json_fn link_fn;
 static double t_start;
 void hls_set_link_fn(json_fn f) { link_fn = f; }
-static state_fn goggles_fn;
-void hls_set_goggles_fn(state_fn f) { goggles_fn = f; }
 static set_fn cam_fn;
 void hls_set_camera_fn(set_fn f) { cam_fn = f; }
 static duml_fn duml_send_fn;
@@ -506,10 +504,11 @@ void hls_start(int port) {
 }
 
 static void respond(Conn *c, int code, const char *type, const uint8_t *body, size_t blen);
-/* No picture from the goggles: a black frame with a message, still a JPEG, but 503 so that scripts can tell */
+/* No picture from the goggles: the status screen (the same as on HDMI), still a JPEG, but 503 so that scripts can tell */
 static void placeholder(Conn *c) {
-    if (goggles_fn && goggles_fn()) respond(c, 503, "image/jpeg", PLACEHOLDER_NO_VIDEO, sizeof(PLACEHOLDER_NO_VIDEO));
-    else respond(c, 503, "image/jpeg", PLACEHOLDER_NO_GOGGLES, sizeof(PLACEHOLDER_NO_GOGGLES));
+    size_t n;
+    const uint8_t *j = screen_jpeg(&n);
+    respond(c, 503, "image/jpeg", j, n);
 }
 
 static void respond(Conn *c, int code, const char *type, const uint8_t *body, size_t blen) {

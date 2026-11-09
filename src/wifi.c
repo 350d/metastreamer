@@ -114,6 +114,11 @@ static void wlan_ip(char *ip, size_t n) {
     freeifaddrs(ifa);
 }
 
+void wifi_status(char *ssid, size_t sl, int *signal, char *ip, size_t il) {
+    wlan_ip(ip, il);
+    if (ip[0]) link_info(ssid, sl, signal); else { ssid[0] = 0; *signal = 0; }
+}
+
 size_t wifi_json(char *out, size_t cap) {
     J j = {out, cap, 0};
     out[0] = 0;

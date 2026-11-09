@@ -29,7 +29,7 @@ metastreamer --wifi-conf metastreamer.txt wpa_supplicant.conf
 ```
 
 - `--no-hdmi`: no display; the decoder still runs for `/snapshot`
-- `--hdmi-mode`: default 1920×1080 at 50 Hz (else 60); `auto` takes the display's preferred mode
+- `--hdmi-mode`: default 1920×1080 at 60 Hz (else 50); `auto` takes the display's preferred mode
   (capture cards often prefer 720p)
 - `--duml-probe`, `--duml-console`: see [protocol.md](protocol.md#research-aids)
 - `--wifi-conf`: used at boot by `metastreamer-wifi` to turn the `[wifi]` section into a `wpa_supplicant` config
@@ -42,6 +42,9 @@ metastreamer --wifi-conf metastreamer.txt wpa_supplicant.conf
 | `src/usb.c` | the USB gadget: configfs, FunctionFS, endpoint threads, session restart |
 | `src/hls.c` | H.264 → fMP4 (per-frame stream and HLS), HTTP server, pages, API |
 | `src/hdmi.c` | V4L2 hardware decoder, KMS output, JPEG snapshots |
+| `src/screen.c` | the status screen (HDMI under the video, `/snapshot` without video); `src/jpeg.c` encodes it |
+| `src/splash.c` | `metastreamer --splash`: the same screen as the boot screen on the console framebuffer, started by `rcS` |
+| `src/ui_assets.h` | its font, icons and animations, made from `assets/` by `tools/gen-ui.py` (any TTF/OTF; needs Pillow, fontTools, numpy; kept in git) |
 | `src/telem.c` | telemetry from DUML, `/duml` monitor |
 | `src/wifi.c` | Wi-Fi: `wpa_supplicant` config, `/api/wifi`, `/api/net` |
 | `src/conf.c` | `metastreamer.txt`: all settings, read and written in one place |

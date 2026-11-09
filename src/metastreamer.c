@@ -34,6 +34,8 @@
 #include "wifi.h"
 #include "conf.h"
 #include "usb.h"
+#include "screen.h"
+#include "splash.h"
 
 #define APP 0x02
 #define FLAGS_REQUEST 0x40
@@ -60,6 +62,7 @@ static size_t blen;
 static uint16_t seq = 1;
 static int registered;
 static double last_hb, last_reg, started;
+static double last_video;
 static unsigned long long vbytes, port_bytes_video, port_bytes_other;
 static char goggles_clock[24];   /* last answer to CMD_GET_DATE, "YYYY-MM-DDTHH:MM:SS" */
 static time_t goggles_t;         /* that answer (local time, see conf.c) as epoch seconds ... */
@@ -142,6 +145,7 @@ static void do_register(void) {
 
 static void on_video(const uint8_t *d, size_t n) {
     vbytes += n;
+    last_video = now();
     hls_feed(d, n);
 }
 
@@ -425,12 +429,41 @@ static size_t link_json(char *o, size_t cap) {
 }
 
 static double last_rx;
-/* for the /snapshot placeholder: the goggles are on the link and talking */
-static int goggles_up(void) { return usb_enabled() && now() - last_rx < 3.0; }
+
+/* the status screen (HDMI under the video, /snapshot without video): what the bridge waits for */
+static void screen_poll(void) {
+    static double last, wifi_t;
+    static int wifi, level;
+    static char ssid[33], ip[16];
+    double t = now();
+    if (t - last < 0.25 || t - last_video < 1.0) return;   /* video on screen: nothing to draw */
+    last = t;
+    if (conf_power() == POWER_MIN) wifi = WIFI_OFF;
+    else if (t - wifi_t >= 3.0) {
+        int sig;
+        wifi_t = t;
+        wifi_status(ssid, sizeof(ssid), &sig, ip, sizeof(ip));
+        wifi = ip[0] ? WIFI_CONNECTED : WIFI_SEARCHING;
+        level = !sig ? 2 : sig >= -55 ? 3 : sig >= -67 ? 2 : sig >= -78 ? 1 : 0;
+    }
+    ScreenState s;
+    memset(&s, 0, sizeof(s));
+    int talking = usb_enabled() && t - last_rx < 3.0;
+    s.reconnecting = usb_restarting();
+    s.stage = !usb_enabled() ? STAGE_USB
+            : !talking || !registered || t - last_hb > 5.0 ? STAGE_GOGGLES
+            : telem_link_quality() <= 0 ? STAGE_AIR_UNIT : STAGE_VIDEO;
+    s.wifi = wifi; s.wifi_level = level;
+    if (wifi == WIFI_CONNECTED) { memcpy(s.ssid, ssid, sizeof(ssid)); memcpy(s.ip, ip, sizeof(ip)); }
+    s.undervoltage = uv_now ? 2 : uv_seen ? 1 : 0;
+    screen_update(&s);
+}
 
 int main(int argc, char **argv) {
     /* boot-time helper for metastreamer-wifi: [wifi] in metastreamer.txt -> wpa_supplicant.conf */
     if (argc == 4 && !strcmp(argv[1], "--wifi-conf")) return wifi_gen_conf(argv[2], argv[3]);
+    /* boot screen, started by rcS */
+    if (argc == 2 && !strcmp(argv[1], "--splash")) { setvbuf(stdout, NULL, _IOLBF, 0); return splash_main(); }
     int http_port = 80, use_hdmi = 1, duml_console = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--no-hdmi")) use_hdmi = 0;
@@ -440,21 +473,22 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--duml-console")) duml_console = 1;
         else { fprintf(stderr, "usage: %s [--http PORT] [--no-hdmi] [--hdmi-mode WxH[@HZ]|auto] [--duml-probe SET:ID] [--duml-console]\n"
                                "       %s --wifi-conf metastreamer.txt wpa_supplicant.conf\n"
+                               "       %s --splash   (boot screen on /dev/fb0, until metastreamer starts)\n"
                                "  --no-hdmi: no display, decoding for /snapshot stays on\n"
-                               "  --hdmi-mode: default 1920x1080 (50 Hz, else 60); auto = display's preferred mode\n"
+                               "  --hdmi-mode: default 1920x1080 (60 Hz, else 50); auto = display's preferred mode\n"
                                "  --duml-probe: research, send request SET:ID (hex) to all known addresses, replies in /duml\n"
                                "  --duml-console: research, enable /api/duml/send (any request to any device, no login: never on an open network)\n",
-                               argv[0], argv[0]); return 2; }
+                               argv[0], argv[0], argv[0]); return 2; }
     }
     signal(SIGPIPE, SIG_IGN);
     conf_load();
     setvbuf(stdout, NULL, _IOLBF, 0);
 
     power_start();
+    splash_stop();   /* the boot screen hands the display over */
     if (usb_start() < 0) return 1;
     hls_start(http_port);
     hls_set_link_fn(link_json);
-    hls_set_goggles_fn(goggles_up);
     hls_set_camera_fn(cam_set);
     if (duml_console) hls_set_duml_fn(duml_console_send);
     if (hdmi_start(use_hdmi) == 0) hls_set_au_sink(hdmi_feed_au);   /* always decode (for /snapshot), display depends on the flag */
@@ -487,6 +521,7 @@ int main(int argc, char **argv) {
 
         usb_tick();
         power_poll();
+        screen_poll();
 
         double t = now();
         if (usb_enabled() && !usb_restarting() && t - last_rx > 10.0) {

@@ -21,9 +21,6 @@ void hls_tick(void);
 /* JSON fragment about the goggles link for /status */
 typedef size_t (*json_fn)(char *out, size_t cap);
 void hls_set_link_fn(json_fn f);
-/* 1 while the goggles are on the USB link; picks the /snapshot placeholder's message */
-typedef int (*state_fn)(void);
-void hls_set_goggles_fn(state_fn f);
 /* camera settings from /api/set?key=value: 0 ok, -1 bad value, -2 bad key, -3 no link */
 typedef int (*set_fn)(const char *key, const char *value);
 void hls_set_camera_fn(set_fn f);

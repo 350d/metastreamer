@@ -13,3 +13,6 @@ dtoverlay=miniuart-bt
 # fast boot
 boot_delay=0
 disable_splash=1
+# HDMI is left to the kernel: the firmware does not light it up first (in the display's preferred mode), so the
+# display gets one signal, 1920x1080 at 60 Hz (cmdline.txt video=), and no mode change during the boot
+hdmi_ignore_hotplug=1

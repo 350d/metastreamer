@@ -9,6 +9,9 @@
  * when the decoder delivers faster than the display refreshes, single frames are skipped at the display and the
  * decoder never waits for a vblank. Only if the input queue overflows anyway are frames dropped until the next
  * keyframe. JPEG snapshots are encoded in their own thread.
+ * The primary plane under the video holds the status screen (screen.c); the video plane is switched off when no
+ * frame came for a second, so the display always shows either the video or the status, never a frozen frame.
+ * A display connected after the start is picked up within a few seconds.
  */
 #include "hdmi.h"
 
@@ -46,7 +49,8 @@ static int dfd = -1;
 static uint32_t conn_id, crtc_id, plane_id;
 static int crtc_idx;
 static struct drm_mode_modeinfo mode;
-/* Wanted output mode. w=0: use the EDID preferred mode. hz=0: prefer 50 Hz (goggles stream is 50 fps), then 60. */
+/* Wanted output mode. w=0: use the EDID preferred mode. hz=0: prefer 60 Hz, then 50. The goggles
+ * stream 60 fps (O3: camera at 60 fps, Low Power off) or 30 fps (everything else): both even at 60 Hz. */
 static unsigned want_w = 1920, want_h = 1080, want_hz = 0;
 
 int hdmi_set_mode(const char *s) {
@@ -69,7 +73,7 @@ static struct drm_mode_modeinfo pick_mode(const struct drm_mode_modeinfo *m, uin
             if (m[i].hdisplay != want_w || m[i].vdisplay != want_h || (m[i].flags & DRM_MODE_FLAG_INTERLACE)) continue;
             int hz = m[i].vrefresh, score;
             if (want_hz) score = abs(hz - (int)want_hz);
-            else score = hz == 50 ? 0 : hz == 60 ? 1 : 100 + abs(hz - 50);
+            else score = hz == 60 ? 0 : hz == 50 ? 1 : 100 + abs(hz - 60);
             if (score < best_score) { best_score = score; best = i; }
         }
         if (best < 0)
@@ -88,6 +92,10 @@ static int drm_open(void) {
         if (xioctl(fd, DRM_IOCTL_MODE_GETRESOURCES, &res) < 0 || res.count_connectors == 0 || res.count_crtcs == 0) {
             close(fd); continue;
         }
+        /* modes with their picture aspect ratio: the console's mode carries it, and without it ours would differ,
+         * so taking over the display (and handing it back) would be a full modeset: the screen blinks */
+        struct drm_set_client_cap ar = {DRM_CLIENT_CAP_ASPECT_RATIO, 1};
+        xioctl(fd, DRM_IOCTL_SET_CLIENT_CAP, &ar);
         uint32_t *crtcs = calloc(res.count_crtcs, 4), *conns = calloc(res.count_connectors, 4);
         uint32_t *encs = calloc(res.count_encoders ? res.count_encoders : 1, 4), *fbs = calloc(res.count_fbs ? res.count_fbs : 1, 4);
         res.crtc_id_ptr = (uintptr_t)crtcs; res.connector_id_ptr = (uintptr_t)conns;
@@ -153,6 +161,113 @@ static void atomic_setup(void) {
     if (atomic_ok) fcntl(dfd, F_SETFL, fcntl(dfd, F_GETFL) | O_NONBLOCK);   /* flip events are read after poll() */
 }
 
+/* the status screen on the primary plane: written by the main thread (hdmi_show_screen), shown when the video
+ * plane is off */
+static pthread_mutex_t bgm = PTHREAD_MUTEX_INITIALIZER;
+static uint8_t *bg_map; static uint32_t bg_pitch;
+static const uint32_t *bg_src; static int bg_w, bg_h;
+
+/* bgm held: a rectangle of the screen to the display, nearest-neighbour scaled to the mode */
+static void bg_copy_rect(uint32_t sx, uint32_t sy, uint32_t sw, uint32_t sh) {
+    uint32_t w = mode.hdisplay, h = mode.vdisplay;
+    uint32_t x0 = sx * w / bg_w, x1 = ((sx + sw) * w + bg_w - 1) / bg_w;
+    uint32_t y0 = sy * h / bg_h, y1 = ((sy + sh) * h + bg_h - 1) / bg_h;
+    if (x1 > w) x1 = w;
+    if (y1 > h) y1 = h;
+    for (uint32_t y = y0; y < y1; y++) {
+        uint32_t *d = (uint32_t *)(bg_map + (size_t)y * bg_pitch);
+        const uint32_t *s = bg_src + (size_t)(y * bg_h / h) * bg_w;
+        if (w == (uint32_t)bg_w) { memcpy(d + x0, s + x0, (x1 - x0) * 4); continue; }
+        for (uint32_t x = x0; x < x1; x++) d[x] = s[x * bg_w / w];
+    }
+}
+static void bg_copy(void) { bg_copy_rect(0, 0, bg_w, bg_h); }
+
+static struct { const uint32_t *frames; int n, w, h, x, y, ms, last; } an[4];   /* animations, below */
+
+void hdmi_show_screen(const uint32_t *px, int w, int h) {
+    pthread_mutex_lock(&bgm);
+    bg_src = px; bg_w = w; bg_h = h;
+    if (bg_map) bg_copy();
+    for (int i = 0; i < 4; i++) an[i].last = -1;   /* the copy put their first frames back */
+    pthread_mutex_unlock(&bgm);
+}
+
+/* the animations (the loader and the Wi-Fi bars of the status screen): their own thread draws the current frames
+ * right after each vblank, far from the scanlines they are on, so they neither tear nor stutter when the main loop
+ * is busy */
+#define ANIMS 4
+
+void hdmi_set_animation(int slot, const uint32_t *frames, int n, int fw, int fh, int x, int y, int frame_ms) {
+    if (slot < 0 || slot >= ANIMS) return;
+    pthread_mutex_lock(&bgm);
+    an[slot].frames = frames; an[slot].n = n; an[slot].w = fw; an[slot].h = fh;
+    an[slot].x = frames && n > 0 ? x : -1; an[slot].y = y;
+    an[slot].ms = frame_ms > 0 ? frame_ms : 60; an[slot].last = -1;   /* the screen under it is redrawn: draw again */
+    pthread_mutex_unlock(&bgm);
+}
+
+static void an_blit(int a, const uint32_t *f) {   /* bgm held */
+    int ax = an[a].x, ay = an[a].y, aw = an[a].w, ah = an[a].h;
+    uint32_t w = mode.hdisplay, h = mode.vdisplay;
+    if (w == (uint32_t)bg_w && h == (uint32_t)bg_h) {   /* no scaling */
+        for (int y = 0; y < ah && ay + y < bg_h; y++)
+            memcpy(bg_map + (size_t)(ay + y) * bg_pitch + ax * 4, f + y * aw, aw * 4);
+        return;
+    }
+    uint32_t x0 = ax * w / bg_w, x1 = ((ax + aw) * w + bg_w - 1) / bg_w;
+    uint32_t y0 = ay * h / bg_h, y1 = ((ay + ah) * h + bg_h - 1) / bg_h;
+    if (x1 > w) x1 = w;
+    if (y1 > h) y1 = h;
+    for (uint32_t y = y0; y < y1; y++) {
+        int fy = (int)(y * bg_h / h) - ay;
+        if (fy < 0 || fy >= ah) continue;
+        uint32_t *d = (uint32_t *)(bg_map + (size_t)y * bg_pitch);
+        for (uint32_t x = x0; x < x1; x++) {
+            int fx = (int)(x * bg_w / w) - ax;
+            if (fx >= 0 && fx < aw) d[x] = f[fy * aw + fx];
+        }
+    }
+}
+
+static double now_s(void);
+static int overlay_on;
+static void *anim_thread(void *arg) {
+    (void)arg;
+    unsigned type = _DRM_VBLANK_RELATIVE;
+    if (crtc_idx == 1) type |= _DRM_VBLANK_SECONDARY;
+    else if (crtc_idx > 1) type |= (crtc_idx << _DRM_VBLANK_HIGH_CRTC_SHIFT) & _DRM_VBLANK_HIGH_CRTC_MASK;
+    for (;;) {
+        union drm_wait_vblank vb = {.request = {.type = type, .sequence = 1}};
+        if (xioctl(dfd, DRM_IOCTL_WAIT_VBLANK, &vb) < 0) {
+            static int said;
+            if (!said++) perror("[hdmi] wait for vblank (animation unsynchronized)");
+            usleep(20000);
+        }
+        if (overlay_on) {   /* the video covers them: draw them all again when it is gone */
+            for (int i = 0; i < ANIMS; i++) an[i].last = -1;
+            continue;
+        }
+        /* frames advance by display refreshes, not by the clock: each one stays on screen equally long */
+        unsigned seq = vb.reply.sequence ? vb.reply.sequence : (unsigned)(now_s() * 50);
+        pthread_mutex_lock(&bgm);
+        for (int i = 0; bg_map && bg_src && i < ANIMS; i++) {
+            if (an[i].x < 0 || !an[i].frames || an[i].n <= 0) continue;
+            unsigned per = mode.vrefresh ? (an[i].ms * mode.vrefresh + 500) / 1000 : 1;
+            int k = (int)(seq / (per ? per : 1) % (unsigned)an[i].n);
+            if (k != an[i].last) { an_blit(i, an[i].frames + (size_t)k * an[i].w * an[i].h); an[i].last = k; }
+        }
+        pthread_mutex_unlock(&bgm);
+    }
+    return NULL;
+}
+
+static void anim_start(void) {
+    static int started;
+    pthread_t t;
+    if (!started && pthread_create(&t, NULL, anim_thread, NULL) == 0) { pthread_detach(t); started = 1; }
+}
+
 static int drm_setup_crtc_and_plane(void) {
     struct drm_mode_create_dumb cd = {.width = mode.hdisplay, .height = mode.vdisplay, .bpp = 32};
     if (xioctl(dfd, DRM_IOCTL_MODE_CREATE_DUMB, &cd) < 0) { perror("[hdmi] create_dumb"); return -1; }
@@ -162,7 +277,13 @@ static int drm_setup_crtc_and_plane(void) {
     struct drm_mode_map_dumb md = {.handle = cd.handle};
     if (xioctl(dfd, DRM_IOCTL_MODE_MAP_DUMB, &md) == 0) {
         void *p = mmap(NULL, cd.size, PROT_READ | PROT_WRITE, MAP_SHARED, dfd, md.offset);
-        if (p != MAP_FAILED) { memset(p, 0, cd.size); munmap(p, cd.size); }
+        if (p != MAP_FAILED) {
+            memset(p, 0, cd.size);
+            pthread_mutex_lock(&bgm);
+            bg_map = p; bg_pitch = cd.pitch;
+            if (bg_src) bg_copy();
+            pthread_mutex_unlock(&bgm);
+        }
     }
     struct drm_mode_crtc sc = {.crtc_id = crtc_id, .fb_id = f.fb_id, .set_connectors_ptr = (uintptr_t)&conn_id,
                                .count_connectors = 1, .mode = mode, .mode_valid = 1};
@@ -240,6 +361,19 @@ static void cap_release(void) {
     ncap = 0; shown = -1;
 }
 
+/* a decoder buffer as a DRM framebuffer for the video plane */
+static int cap_import(int i) {
+    struct drm_prime_handle ph = {.fd = cap_dmabuf[i]};
+    if (xioctl(dfd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &ph) < 0) { perror("[hdmi] prime"); return -1; }
+    struct drm_mode_fb_cmd2 fb = {.width = vis_w, .height = vis_h, .pixel_format = DRM_FORMAT_YUV420};
+    fb.handles[0] = fb.handles[1] = fb.handles[2] = ph.handle;
+    fb.pitches[0] = buf_bpl; fb.pitches[1] = fb.pitches[2] = buf_bpl / 2;
+    fb.offsets[1] = buf_bpl * buf_h; fb.offsets[2] = fb.offsets[1] + (buf_bpl / 2) * (buf_h / 2);
+    if (xioctl(dfd, DRM_IOCTL_MODE_ADDFB2, &fb) < 0) { perror("[hdmi] addfb2 yuv"); return -1; }
+    cap_fb[i] = fb.fb_id;
+    return 0;
+}
+
 static int cap_setup(void) {
     cap_release();
     struct v4l2_format f = {.type = T_CAP};
@@ -263,18 +397,10 @@ static int cap_setup(void) {
             cap_map[i] = mmap(NULL, qp[0].length, PROT_READ, MAP_SHARED, vfd, qp[0].m.mem_offset);
             if (cap_map[i] == MAP_FAILED) cap_map[i] = NULL; else cap_len[i] = qp[0].length;
         }
-        if (!display) { if (qbuf(T_CAP, i, 0) < 0) { perror("[hdmi] qbuf cap"); return -1; } continue; }
         struct v4l2_exportbuffer eb = {.type = T_CAP, .index = i, .plane = 0, .flags = O_CLOEXEC};
         if (xioctl(vfd, VIDIOC_EXPBUF, &eb) < 0) { perror("[hdmi] expbuf"); return -1; }
         cap_dmabuf[i] = eb.fd;
-        struct drm_prime_handle ph = {.fd = eb.fd};
-        if (xioctl(dfd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &ph) < 0) { perror("[hdmi] prime"); return -1; }
-        struct drm_mode_fb_cmd2 fb = {.width = vis_w, .height = vis_h, .pixel_format = DRM_FORMAT_YUV420};
-        fb.handles[0] = fb.handles[1] = fb.handles[2] = ph.handle;
-        fb.pitches[0] = bpl; fb.pitches[1] = fb.pitches[2] = bpl / 2;
-        fb.offsets[0] = 0; fb.offsets[1] = bpl * ah; fb.offsets[2] = fb.offsets[1] + (bpl / 2) * (ah / 2);
-        if (xioctl(dfd, DRM_IOCTL_MODE_ADDFB2, &fb) < 0) { perror("[hdmi] addfb2 yuv"); return -1; }
-        cap_fb[i] = fb.fb_id;
+        if (display && cap_import(i) < 0) return -1;
         if (qbuf(T_CAP, i, 0) < 0) { perror("[hdmi] qbuf cap"); return -1; }
     }
     int t = T_CAP;
@@ -360,7 +486,10 @@ static int flip(int idx) {
     return 0;
 }
 
+static double last_frame_t;
+
 static void present(int idx) {
+    last_frame_t = now_s(); overlay_on = 1;
     if (!atomic_ok) { show(idx); return; }
     if (in_flight >= 0) {   /* a flip is pending: the frame waits its turn */
         if (nwait == WAIT_MAX) {
@@ -396,6 +525,27 @@ static void drm_events(void) {
         if (e->type == DRM_EVENT_FLIP_COMPLETE) flip_done();
         o += e->length;
     }
+}
+
+/* no video for a while: switch the video plane off, the status screen under it shows */
+static void overlay_off(void) {
+    if (in_flight >= 0 || nwait) return;   /* a flip is still pending: next time */
+    int ok;
+    if (atomic_ok) {
+        uint32_t props[2] = {p_fb, p_crtc}, objs[1] = {plane_id}, counts[1] = {2};
+        uint64_t vals[2] = {0, 0};
+        struct drm_mode_atomic a = {.count_objs = 1, .objs_ptr = (uintptr_t)objs, .count_props_ptr = (uintptr_t)counts,
+            .props_ptr = (uintptr_t)props, .prop_values_ptr = (uintptr_t)vals};
+        ok = xioctl(dfd, DRM_IOCTL_MODE_ATOMIC, &a) == 0;
+    } else {
+        struct drm_mode_set_plane sp = {.plane_id = plane_id, .crtc_id = crtc_id, .fb_id = 0};
+        ok = xioctl(dfd, DRM_IOCTL_MODE_SETPLANE, &sp) == 0;
+    }
+    overlay_on = 0;
+    if (!ok) { perror("[hdmi] video plane off"); return; }
+    if (shown >= 0) { qbuf(T_CAP, shown, 0); shown = -1; }
+    need_full = 1;
+    printf("[hdmi] no video for 1 s: status screen\n");
 }
 
 /* before the capture buffers are replaced: let a pending flip land */
@@ -549,12 +699,45 @@ void hdmi_feed_au(const uint8_t *d, size_t n, int key) {
     pthread_mutex_unlock(&qm);
 }
 
+/* a display connected after the start: checked every 2 s (sysfs, cheap), then set up like at the start */
+static int want_display;
+static int hdmi_connected(void) {
+    char p[64], st[16] = "";
+    for (int n = 0; n < 4; n++) {
+        snprintf(p, sizeof(p), "/sys/class/drm/card%d-HDMI-A-1/status", n);
+        FILE *f = fopen(p, "r");
+        if (!f) continue;
+        int ok = fgets(st, sizeof(st), f) && !strncmp(st, "connected", 9);
+        fclose(f);
+        if (ok) return 1;
+    }
+    return 0;
+}
+
+static void display_late(void) {
+    static double last;
+    double t = now_s();
+    if (t - last < 2.0) return;
+    last = t;
+    if (!hdmi_connected()) return;
+    static int fails;
+    if (dfd < 0 && drm_open() < 0) { if (++fails >= 5) want_display = 0; return; }
+    if (drm_setup_crtc_and_plane() < 0) { printf("[hdmi] display connected, but setting it up failed\n"); want_display = 0; return; }
+    for (int i = 0; i < ncap; i++)
+        if (cap_dmabuf[i] >= 0 && !cap_fb[i] && cap_import(i) < 0) { want_display = 0; return; }
+    display = 1;
+    anim_start();
+    printf("[hdmi] display connected\n");
+}
+
 static void *worker(void *arg) {
     (void)arg;
     for (;;) {
         struct pollfd pp[2] = {{vfd, POLLIN | POLLOUT | POLLPRI, 0}, {dfd, POLLIN, 0}};
         poll(pp, display && atomic_ok ? 2 : 1, 5);
         if (display && atomic_ok && (pp[1].revents & POLLIN)) drm_events();
+        if (display && overlay_on && now_s() - last_frame_t > 1.0) overlay_off();
+        if (want_display && !display) display_late();
         struct pollfd p = pp[0];
         if (p.revents & POLLPRI) {
             struct v4l2_event ev;
@@ -592,13 +775,12 @@ static void *worker(void *arg) {
 }
 
 /* initialization in its own thread: on early boot /dev/dri and the decoder may not exist yet */
-static int want_display;
 static void *init_and_run(void *arg) {
     (void)arg;
     if (want_display) {
         int i;
         for (i = 0; drm_open() < 0 && i < 20; i++) { if (i == 0) printf("[hdmi] waiting for display…\n"); usleep(500000); }
-        if (i < 20 && dfd >= 0 && drm_setup_crtc_and_plane() == 0) display = 1;
+        if (i < 20 && dfd >= 0 && drm_setup_crtc_and_plane() == 0) { display = 1; anim_start(); }
         else printf("[hdmi] no display — decode only (for /snapshot)\n");
     }
     for (int i = 0; (vfd = v4l2_open()) < 0; i++) {

@@ -9,10 +9,12 @@ stream the live H.264 video and telemetry to it; the Pi shows the video on HDMI 
 serves it to browsers with about 0.2 s of latency, and lets you change the air unit's camera settings from
 a web page. The whole system is a 90 MB read-only image that shows a picture about 6 s after power-on.
 
-- **HDMI out**: hardware H.264 decode, zero-copy to a KMS plane, 1920×1080 at 50 Hz by default
+- **HDMI out**: hardware H.264 decode, zero-copy to a KMS plane, 1920×1080 at 60 Hz by default (the goggles stream 60 or 30 fps)
 - **Browser**: low-latency fMP4 over Media Source Extensions (~0.2 s), HLS for everything else
-- **Snapshots**: JPEG from the hardware encoder, `/snapshot`; without a picture a black frame saying
-  `NO GOGGLES` or `NO SIGNAL`
+- **Status screen** from the boot until the video comes (and whenever it stops for a second), on HDMI and
+  as `/snapshot`: what the bridge waits for (system, USB, goggles, air unit, video), Wi-Fi with the address of
+  the web page, low voltage. One HDMI signal from power-on, no mode changes on the way
+- **Snapshots**: JPEG from the hardware encoder, `/snapshot`
 - **Telemetry**: link quality, goggles battery, air unit recording and storage, connected devices,
   as JSON, server-sent events and HLS metadata
 - **Camera settings** (being tested and reworked, see below): resolution, frame rate, exposure, ISO, shutter,
@@ -24,6 +26,8 @@ a web page. The whole system is a 90 MB read-only image that shows a picture abo
 - **Power modes**: `power="low"` by default for goggles that power the Pi, `"min"` without Wi-Fi, `"full"`
   on a separate supply
 - **Appliance-style system**: Buildroot, read-only root, hardware watchdog, survives HDMI hot-plug
+
+<img width="960" alt="The status screen on HDMI: goggles connected, waiting for the air unit" src="docs/status-screen.jpg" />
 
 > metastreamer is an independent project. It is not affiliated with, endorsed by or connected to DJI.
 > DJI, DJI Goggles, DJI O3 Air Unit and DJI Fly are trademarks of SZ DJI Technology Co., Ltd.,
@@ -54,7 +58,7 @@ Measured on a Raspberry Pi Zero W with Goggles 2 and an O3 Air Unit, from power-
 
 | Event | Time |
 |---|---|
-| HDMI output, 1920×1080 at 50 Hz | ~3 s |
+| HDMI output, 1920×1080 at 60 Hz | ~3 s |
 | Goggles registered, video on HDMI and in the browser | ~6 s |
 | Wi-Fi connected, DHCP | 8.3–9.5 s |
 | Wi-Fi connected, static address | ~7.8 s |
@@ -141,7 +145,7 @@ A wrong static address makes the Pi unreachable over Wi-Fi: set `network="dhcp"`
 | `/settings` | Control page |
 | `/live.mp4` | Endless fMP4, one fragment per frame, for Media Source Extensions |
 | `/stream.m3u8` | HLS (fMP4 segments of one GOP, telemetry in `EXT-X-DATERANGE`) |
-| `/snapshot` | Current frame as JPEG. Without a picture: a black frame saying `NO GOGGLES` or `NO SIGNAL`, with status 503 |
+| `/snapshot` | Current frame as JPEG. Without a picture: the status screen (the same as on HDMI), with status 503 |
 | `/status` | JSON: link, video, telemetry, camera, HDMI |
 | `/events` | The same as server-sent events, 4 per second |
 | `/duml` | Every DUML message type seen from the goggles, for research |
