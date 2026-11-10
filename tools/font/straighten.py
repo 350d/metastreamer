@@ -5,9 +5,11 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 K = 16
 SIGMA = 0.0           # px of the atlas: removes the pixel staircase before the first trace
-RUN_MIN = 4.5         # px: a straight run at least this long becomes one exact line
+RUN_MIN = 1.6         # px: a straight run at least this long becomes one exact line...
+RUN_LONG = 4.5        # px: ...and shorter than this only between two corners (else it is a chord of a curve)
+CORNER_LOOK, CORNER_TURN = 1.5, 25   # px, deg: a corner = the contour turns this much within that distance
 EPS = 0.15            # px: max deviation of a run from its line
-SAG_MAX = 0.06        # px: residual bow above this = a round, not a straight
+SAG_MAX = 0.10        # px: residual bow above this = a round, not a straight
 TRIM = 0.6            # px: kept off the ends of each straight run (they belong to the curves next to it)
 SLANT = math.atan(5 / 22)   # stems: dx/dy
 STEM_TOL = 0.0   # the atlas stems already share one slant (12.76 +- 0.28 deg): snapping only costs fidelity
@@ -50,6 +52,35 @@ def bowed(pts):
     sag = abs(a) * ((t.max() - t.min()) / 2) ** 2
     return sag > SAG_MAX * K
 
+def corner_end(pts, idx, either=False, deg=None):
+    """a short straight is bounded by corners on both sides; a chord of a curve turns gently at one end at least"""
+    n = len(pts); m = max(2, int(CORNER_LOOK * K / 2))      # dense points are ~2 K-px apart
+    d = pts[idx[-1]] - pts[idx[0]]; d = d / np.linalg.norm(d)
+    def turn(a, b):
+        v = pts[b % n] - pts[a % n]; v = v / (np.linalg.norm(v) or 1)
+        return math.degrees(math.acos(max(-1, min(1, v @ d))))
+    return (max if either else min)(turn(idx[-1], idx[-1] + m), turn(idx[0] - m, idx[0])) > (deg or CORNER_TURN)
+
+SLANT_RUN, SLANT_TOL, SLANT_CORNER = 2.0, 4.0, 60   # px, degrees: a short run along the italic slant with a
+# sharp corner at one end is a cut: a terminal (j), the end of a bar (T)
+
+def slanted(pts, idx):
+    d = pts[idx[-1]] - pts[idx[0]]
+    if np.linalg.norm(d) < SLANT_RUN * K: return False
+    ang = math.degrees(math.atan2(-d[0], d[1]) if d[1] >= 0 else math.atan2(d[0], -d[1]))
+    return abs(ang - math.degrees(SLANT)) < SLANT_TOL and corner_end(pts, idx, either=True, deg=SLANT_CORNER)
+
+CHORD_MAX, CHORD_H, CHORD_S, CHORD_CORNER = 5.0, 8.0, 5.0, 40   # px, degrees
+
+def chord(pts, idx):
+    """a flat stretch of a wide round (the shoulder of G, C, S): short, oblique (neither horizontal nor along
+    the slant) and running smoothly into the curves on both sides"""
+    d = pts[idx[-1]] - pts[idx[0]]
+    if np.linalg.norm(d) >= CHORD_MAX * K or corner_end(pts, idx, either=True, deg=CHORD_CORNER): return False
+    ang = math.degrees(math.atan2(d[0], d[1])) % 180          # 90 = horizontal
+    slant = 180 - math.degrees(SLANT)
+    return abs(ang - 90) > CHORD_H and abs(ang - slant) > CHORD_S
+
 def straighten(pts, runs=None):
     """grow maximal runs whose points stay within EPS of a line; replace each long run by its projection on the
     fitted line (stems snapped to the global slant). runs: list to receive (first index, last index, m, d)"""
@@ -59,8 +90,13 @@ def straighten(pts, runs=None):
         j = i + 2
         while j < i + n and fit_line(pts[np.arange(i, j + 1) % n])[2] < eps: j += 3
         while j > i + 2 and fit_line(pts[np.arange(i, j + 1) % n])[2] >= eps: j -= 1
+        # grown into the next round: shorten from the far end until the run is straight
+        while j - i > 4 and np.linalg.norm(pts[(j - 1) % n] - pts[i]) >= RUN_MIN * K and bowed(pts[np.arange(i, j) % n]):
+            j -= 2
         idx = np.arange(i, j) % n
-        if np.linalg.norm(pts[idx[-1]] - pts[idx[0]]) >= RUN_MIN * K and not used[idx].any() and not bowed(pts[idx]):
+        length = np.linalg.norm(pts[idx[-1]] - pts[idx[0]])
+        if length >= RUN_MIN * K and not used[idx].any() and not bowed(pts[idx]) and not chord(pts, idx) and \
+                (length >= RUN_LONG * K or corner_end(pts, idx) or slanted(pts, idx)):
             m, d, _ = fit_line(pts[idx])
             # the run must not reach into the neighbouring curves: trim TRIM px off both ends
             along = (pts[idx] - m) @ d
@@ -167,7 +203,7 @@ def corners(pts, runs, filled, max_gap=6.0):
     return out
 
 
-R_INNER = 0.3        # px: every inner round (counter corners, stem-bar joins): one standard radius
+R_INNER = 0.8        # px: every inner round (counter corners, stem-bar joins): one standard radius
 R_OUTER = 0.6        # px: small outer corners
 OUTER_ROUNDS = False # standardize outer corners too (off: they stay as in the atlas)
 FILLET_MIN_DEG, FILLET_MAX_DEG = 55, 125   # only corners close to square get the standard rounds
